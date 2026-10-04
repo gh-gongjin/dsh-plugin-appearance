@@ -1,0 +1,30 @@
+{
+  "name": "dsh-plugin-appearance",
+  "version": "0.0.1",
+  "type": "module",
+  "description": "DSH 外观插件：用宿主官方主题通道换配色皮肤（8 张内置）、用 brand slot 换侧栏与首屏标志（内置六枚或用户自己的图片），选择记在宿主存储里，刚进来是原样。不写宿主文件、不注入全局 CSS、不碰系统设置。",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": { "default": "./client.js" },
+    "./package.json": "./package.json"
+  },
+  "files": ["index.js", "lib", "client.js", "cordis.yml", "docs", "README.md", "LICENSE"],
+  "keywords": ["dsh", "dsh-plugin", "appearance", "theme", "skin", "brand"],
+  "license": "MIT",
+  "scripts": {
+    "test": "node test/run-all.mjs"
+  },
+  "dsh": {
+    "bundle": { "patch": "cordis.yml" },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-theme",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  }
+}

@@ -1,0 +1,477 @@
+# dsh-plugin-appearance 设计说明
+
+- 日期：2026-10-03（同日第二轮需求后重写 §1/§4/§5；同日第三轮按用户四条界面裁定补 §1 决策 14~17、§2 宿主骨架事实、§5-U9、§6 出图通道；**同日第四轮按用户「太丑了，页面交互不行」重做整个面板的界面与交互** —— 补 §1 决策 18~23、§5-U10/U11、§6 新读数）；**2026-10-04 第五轮**按用户两条提问加了「名称行可换」与「传图自动裁切压缩」 —— 补 §1 决策 19/20（并作废决策 3 与决策 12 里"不改名称行"那半句）、§4 标志表后的名称行说明、§5-U12/U13、§6 新读数与 M38~M46）；**2026-10-04 第六轮**按用户两条真机反馈修了「切回内置图标后那行绿字还挂着」与「名称行的文字那一格也要能换成图片」 —— 补 §1 决策 22/23、§4 名称行两张脸的说明、§5-U14、§6 新读数与 M49~M58）；**2026-10-04 第七轮**按用户「名称行改成下拉，不同选项对应不同操作」把那一格的两张脸收成一个**来源下拉**（官方字标 / 自定义文字 / 自定义图片） —— 补 §1 决策 24、§4 三态来源的说明、§5-U15、§6 新读数与 M59~M65（含用户装上后补的“选图片来源不许自动弹框”）；**同日再补**：配色区「不覆盖」提到第一位（决策 25、M66/M67）。
+- 状态：**已挂载，真机跑通过第一、二轮**（用户自己在 desktop 里装的）。第三~七轮改的都是界面层与浏览器侧处理（第五、六轮另动了 `lib/store.js` 的 schema 一个可选字段 / `logo` 表多一行；**第七轮零存储改动**，只把那一格已有的三种状态做成显式来源），离线 **98 条用例、67 条变异**、离线像素读数全绿；**真机复读与真机截图还没做**（§5-U1b/U1c/U2/U9/U10/U11/U12/U13/U14/U15）—— 那些结论目前只有**宿主框架副本上的像素**，且回报字段证明不了页面吃没吃新 client bundle，所以不许写成"真机已确认"。
+- 第五轮的**存档字段是新增的**（`prefs.brandName`）：`SCHEMA_VER` 保持 1（可选字段，旧存档照样读得出来），但**名称行那条"重启后还在不在"要另算一次真机验证**（§5-U2 只覆盖了皮肤与图标）。
+- 参照实现：`dsh-plugin-sysops`（代码组织、宿主能力面、测试口径全部继承）
+- 证据基线：运行中的是 **desktop 0.2.0-rc.2**（`D:\Deepseek harness desktop\resources\app.asar`，Electron 44，回环端口本次实测 **19387**）；`D:\Deepseek harness` 那份 0.1.7-rc.2 是 web 版，只用它的包 README/类型做**文字出处**，凡两条版本可能分叉，本文件以 asar 内联 bundle 的实测为准。
+
+### 真机第一轮读数（2026-10-03，GET-only）
+
+```
+GET http://127.0.0.1:19387/appearance/api/state → 200
+{"ok":true,"data":{...,"skins":[{ink,24},{moss,24}],"defaultSkinId":"ink","lastReport":{"at":1791025395826}}}
+```
+界面上的生效核对（用户截图）：`theme 服务 已就绪`、`活动明暗档 light`、三格 `sidebar.brand.mark / sidebar.brand.name / conversation.hero.brand.mark → 已占位（priority -1）`，侧栏那一行的鱼 logo + deepseek + HARNESS 已换成自绘的「外观 ▢POC」。
+（同日稍后按用户裁定改了文案：这些开发期字样换成「配色 / 明暗 / 生效处数 / 标志」+「页面底色 / 正文字色 / 强调色」，见 §1 决策 11；上面这条留作当时的原始读数，不改写。）
+
+⇒ **U1 结案：负 `priority` 运行时接受，且"最低者渲染"在真机成立**（官方品牌包没被我们撞掉，我们成了渲染的那条）。
+⇒ **U6 结案（是新 bug 的结案）**：`lastReport` 只有 `{at}` —— 五个字段全丢。根因不是 body 形状，是**宿主调 handler 只传 `(req, res)`**（`@deepseek-ai/dsh-host-webserver/lib/index.js:235`：`await route.handler(req, res)`），我们按第三个参数收体，永远收到 `undefined`。sysops 早就踩过同一条（`dsh-plugin-sysops/lib/api.js:48-51` 那句注释：「宿主 handler 只收 (req,res)，体要自己拼」）—— 同一条坑，第二个插件又踩了一遍，因为离线用例直接喂了 body。已修：`lib/api.js` 加 `readBody(req)`（1MB 上限、坏 JSON 报 400 BAD_JSON），hs-11/hs-12 用只发 `data`/`end` 事件的假 req 钉住这条形状，M8 是它的变异。
+
+### 真机第二轮读数（2026-10-03，仍然 GET-only）
+
+新的一份已经挂在跑着的 desktop 上（`GET /appearance/api/state` 读到的就是这一份）：
+
+```
+data 键: panelId, label, source, defaultSkinId, noneSkinId, defaultBrandMode, store, skins, marks, lastReport, builtAt
+皮肤: ink:24 moss:24 slate:24 parchment:24 azure:24 plum:24 pine:24 contrast:24
+标志: letter ring diamond hex drop spark
+默认: skinId=none brandMode=off 存档: {"available":true,"domain":"appearance_prefs","message":null}
+lastReport: {"skinId":"none","applied":"0","scheme":"light","logo":"原样","spots":"未抽查","error":"","at":1791030525651}
+GET /appearance/api/prefs → 200 {"skinId":"none","brand":{"mode":"off","markId":null},"logoUrl":null,"stored":false,"updatedAt":null}
+GET /appearance/api/logo  → 404 {"code":"NO_LOGO","message":"还没有选过图片"}
+```
+
+⇒ **默认原样在真机上成立（读数面）**：一条 `overrideTokens` 都没送（`applied:"0"`、`spots:"未抽查"`），标志是 `原样`（`brandRows` 空 ⇒ 没有 `…ok@-1` 那几段），存档 `stored:false` 说明 domain 开成且从没写过。
+⇒ **`storageDomain` 在这台机器上给得出来**（`store.available=true`）—— 但"写过之后重启还在"还没验：写只能由用户在界面上点（真机探针不许 POST），所以这条留在 §5-U2 等一次真重启读数。
+⚠️ 以上都是**读数**，不是像素。用户那侧还欠两张截图：默认态（官方 logo + 内置配色）与「墨蓝 + 暗档」。§5-U1c 与 §5-U1b 只能靠图结案。
+
+### 第三轮（界面四条）没有真机读数 —— 写清楚为什么
+
+本轮只动浏览器半边（`client.js`）的界面层，宿主半边零改动。**要说清楚一件事：读数面证明不了页面里吃没吃新 bundle** —— 回报白名单那六个字段里没有版本标志，`builtAt` 只说明宿主半边是哪一份。刚复跑的一次 GET-only 读数（2026-10-03，端口 19387）：
+```
+lastReport: {"skinId":"none","applied":"0","scheme":"light","logo":"原样","spots":"未抽查","error":"","at":1791032952542}
+builtAt: 1791031700551   marks: letter,ring,diamond,hex,drop,spark
+GET /appearance/api/prefs → {"skinId":"none","brand":{"mode":"off","markId":null},"logoUrl":null,"stored":false,"updatedAt":null}
+```
+⇒ 能确认的只有：宿主半边仍是原样那一套（`applied:0`、`stored:false`，用户还没在界面上点过）。**这轮那四条界面修正的像素证据全部来自离线出图通道**（`tmp/dom-shot.mjs`，读数贴在 §6），结案条件是同一次真机重启后的三张图（默认 light / 墨蓝+暗档 / 滚到底），别在此之前写"真机已确认"。
+
+所以也别把"用户下一张截图里还是滚不动"直接当成回归：**先问有没有完全退出 dsh 再启动**（宿主进程缓存 client bundle，`Ctrl+R` 够不够这个插件没验过；同族的 `dsh-data-analysis` 记的是必须完全重启，见项目记忆）。
+
+### 第四轮（2026-10-03）：用户「太丑了，页面交互不行」→ 面板界面与交互整体重做
+
+这一轮**只动 `client.js` 的界面层**，宿主半边零改动、皮肤表零改动、`SkinSwatch` 的取色口径零改动（决策 17 仍然成立，只是预览块从 60px 长到 88px、多画了一层）。
+
+| # | 改前 | 改后 | 为什么 |
+|---|---|---|---|
+| 1 | 17 张卡片各挂一个**黑实心主按钮**（"用这枚 / 用这张"） | 整片/整卡可点，**卡里一个按钮都没有**；选中态长在对象自己身上（主题色描边 + 角标） | 一屏十几个同权重黑块既吵又要瞄准小按钮。主按钮那种权重该留给"页面主操作"，而这里每一张都是平级选项 |
+| 2 | 标志区 8 张大卡（图标 + 标题 + 说明 + 按钮） | 一排 76px 方片（图标 + 名字），"选图片"那格是 `<label>` 包隐藏 file input | 标志是"挑一枚"，不是"读一段说明"；一排方片一眼扫完，整格点哪儿都开文件选择器 |
+| 3 | 没有悬停态（整串 CSS 零 `:hover`）、没有焦点环 | `.ap-mark/.ap-skin:hover:not(.ap-on)` 换底色、`:focus-visible` 画焦点环、`.ap-on` 跟皮肤走 | "交互不行"最直接的一条：鼠标划过去什么都没发生 |
+| 4 | 「当前生效」是页尾一张卡，四行 kv + 抽查三行 + 各类报错全塞在里面 | 页头一行摘要（配色 / 明暗 / 标志）+ 页头下一条红字条；页尾只留「界面实际读到的配色」三行，没叠层时整块不渲染 | 用户改完必须能**当场**看见结果。反馈落点必须在可视区内，且不许用浮层（用户红线） |
+| 5 | `.ap-root` 挂着 `key: tick` | **去掉 key**，tick 只用来触发重画 | 挂 key 时每点一次整棵子树连 DOM 一起重挂，而 `.ap-root` 正是滚动容器 ⇒ 在配色区点一张皮肤，面板弹回顶部。这条在静态截图上看不出来 |
+| 6 | 卡片是 `div`，语义只有"能点按钮" | 卡片/方片是 `button[role=radio][aria-checked]`，外层 `role=radiogroup`，方向键在组内移动并当场选中 | 一致性 + 可达性；顺带把"组里恰好一项选中"变成可断言的不变量（`ap-35`） |
+
+**新增断言**（都做过反向验证，见 §6 的 M30~M37）：`ap-31` 三态样式齐且读宿主令牌 / 根容器不许用容器查询 / 不许 `position:fixed`；`ap-32` 页头摘要就是反馈落点（点了什么就报什么，错误落在**页头块内**）；`ap-33` 根容器不许挂 `key`（并同时钉住"它就是滚动容器"，否则前半句会悄悄失效）；`ap-34` 死按钮扫描 + 每个单选项都要有 `aria-checked` 与键盘处理；`ap-35` 一个选择只有一个入口，且组里恰好一项选中 + 方向键真的会挪。
+**改写断言**：`ap-28` 从"按钮钉在卡底"改成"卡自己就是那个单选项，卡里不许有第二个按钮"（原意不变：同一行卡片齐平）。
+
+**这一轮踩到的两个坑**（都值得记）：
+
+1. **`h('button', { type: 'div' })` 不是"把元素换成 div"**。`h` 是 `createElement`，元素类型是**第一个参数**；props 里的 `type` 是 HTML 属性（`<button type="button">` 用来防止表单提交）。我第一版反验证就写成了改 props 的 `type`，看着像"配色卡退回不可点击的 div"，实际是个 **no-op 变异** —— 电池当场报「存活」，说明这条断言没被咬到，而不是断言有问题。规律：**反验证里"存活"的那条，先怀疑变异本身是不是没改到行为**。
+2. **管道在受限环境里会 `EBUSY`**。`spawnSync(..., { stdio: 'pipe' })` 起 chrome 时返回 `status:null`、stdout 空串 —— 页面看着像"脚本没跑完"，其实进程压根没起来。更阴的是这会让变异电池**把每条变异都判成"咬住"**（`null !== 0`），整块电池变成一片假红。`tmp/dom-shot.mjs` 与 `tmp/mutation-check.mjs` 现在一律把 stdout/stderr 写进**真实文件描述符**，不经过管道；电池还加了"前置检查：干净套件本来是不是绿的"。
+
+### 第五轮（2026-10-04）：用户两条提问 → 名称行可换 + 传图自动裁切压缩
+
+用户原话两条：「这个图标现在不支持替换吗」（真机截图把侧栏那行 `deepseek` 字标圈了出来）+「我传一张图片能实现自动裁剪压缩到 200kb 吗」。
+第一问先把事实说清：红框圈的是**名称行**（`sidebar.brand.name`），**不是图标格** —— 图标格从第二轮起就支持替换，那行字是第二轮按"没勾就不改文字"的裁定撤掉的；而且两张截图上面板都停在默认态（标志=原样），所以侧栏那个海豚还是官方的，不是 bug。三选一之后用户定了**接上、换自定义文字**；图片那三问答的是**正方裁切 + 保透明走 WebP**、**原图上限 10MB**。
+
+| # | 改前 | 改后 | 为什么 |
+|---|---|---|---|
+| 1 | `sidebar.brand.name` 一格都不碰（`inject` 都不发） | 面板标志区多一行「名称行」：输入框 + 「用这个」/「还原官方」；填了才占那一格，留空即还 | 用户 2026-10-04 明确要它可换，第二轮那条"没勾就不动"的裁定随之作废 |
+| 2 | 名称行与图标档位揉在同一套注册里（`mode === off` 就 `clearBrand()` 全清） | `syncBrand()` 重写成**目标集合 diff**：两类格子各自判断（图标看档位、名称行看有没有填字），只动差集 | 旧写法下"只改名字"会被 `mode === off` 整块清掉；增量还顺带避免了"改名字时图标位先撤再占"那一瞬的官方 logo 闪回 |
+| 3 | 存档只有 `brandMode` / `brandMarkId` | `prefs` 表加可选字段 `brandName`，`writePrefs` 用 `Object.hasOwn(patch.brand, 'name')` **独立判存** | 名称与档位是两件事：只换图标时请求里没带 `name` 字段，不该把用户写的名字顺手抹掉（hs-19 咬） |
+| 4 | 图片超 200KB **直接拒**（浏览器挡一次、宿主再挡一次） | 原图上限放宽到 **10MB**，浏览器侧自动处理：**居中 cover 裁成方形 → 缩到 512px（只缩不放大）→ 沿质量阶梯压到 ≤200KB**；有透明出 WebP、不透明出 JPEG；**SVG 原样保留矢量** | 用户要的就是"不用自己先裁"。宿主那道 200KB 的闸**一个字没改** —— 压缩后送与手动换小图走同一道门，"这条路由谁都能调"的防线不松 |
+| 5 | 处理完什么样，用户看不见 | 方片下面就地写一句（"已裁成方形 · 从 2.4MB 压到 86KB"），失败才出红字 | 自动处理最怕"用户不知情地改了东西"；做了什么必须说出来（红线） |
+| 6 | 用 `new Image()` + `toDataURL` 也能凑合 | `createImageBitmap` 解码（顺手按 EXIF 摆正朝向）+ canvas `toBlob` 编码 | 朝向；而且只有 `toBlob` 拿得到 `size`，质量阶梯才走得动 |
+
+**新增断言**（反向验证见 §6 的 M38~M46）：`ap-36` 名称行填字才占、清空即还、与图标档位互不牵连、超长被拒且现状不动；`ap-37` `coverRect` 的居中裁切几何（横/竖/方/奇数差）；`ap-38` 长方形透明图 → 裁方 + WebP + 走到第 3 档进线，且过程写进 note；`ap-39` 不透明走 JPEG、方形小图压完反而更大时**回退用原文件**；`ap-40` SVG 不位图化（一个 canvas 都不建）；`ap-41` 超 10MB 与非图片类型都当场拒且**一个请求都不发**；`hs-19` 宿主侧名称的读回 / 超长 400 / 空白归一 / 与档位互不牵连。
+**改写断言**：`ap-16` 从"名称行一个 inject 都不发"改成"等三格声明，但默认三格都还是官方的"；`ap-20` 加上 `BRAND_NAME_MAX` 的两头对齐；`hs-14`/`hs-16` 的 `brand` 对象多了 `name` 字段。
+
+**这一轮的三个坑**：
+
+1. **新加的 4 条异步断言忘了 `await`，一条都没跑，套件却报绿**。`checkA` 是 async 的，不 await 就是在后台跑，而 `process.exit` 在它们之前执行 —— 总数从 36 变 38（而不是 42）就是现场证据。这是第四轮"假绿"那一族的老毛病，只是这次刚写完自己就踩。规矩：新增异步断言后**看总数对不对，比看"全绿"更要紧**。
+2. **`status === null` 会让变异电池把每条变异都判成"咬住"**。第四轮记过这个坑，这轮又验证了一遍：`stdio:'pipe'` 在受限环境 EBUSY 时 `status` 是 `null`，`null !== 0` 就成了"套件红了"，整块电池变成一片假红。现在 `runSuite` 一律走真实文件描述符，并带"干净套件本来绿不绿"的前置检查。
+3. **禁用态别整块降 `opacity`**。第一版 `.ap-name-b[disabled]{opacity:.45}` 把按钮淡成一串灰字，出图后根本看不出"这里有两个按钮、只是现在还按不动"。改成只退文字色（`label-tertiary`）、保留边框。
+
+**第五轮补丁（同日，用户装上去之后的真机反馈）**：
+
+1. **「点了一枚图标，再点另一枚就不生效了」—— 这是我上一轮亲手改出来的真 bug**，根因相当具体：
+   为了让"改名称行时图标位不闪回官方"，我把 `syncBrand` 写成了**纯差集** —— 已经在注册表里的格子一律不碰。
+   但**宿主只在「那一格的注册表发生变化」时才重画**，而 `BrandMark` 读的是模块级 `runtime.brand`：
+   我们这边改了，宿主根本不知道。于是第一枚（注册表从 0→2）能换上，之后再换任何一枚，注册表纹丝不动，
+   侧栏就停在第一枚上 —— 用户看到的正是"第二枚点不动"。
+
+   修法**不是**退回全量重挂（那会把"改名字"也变成一次无谓的图标位重挂），而是给每一格算一个**指纹 `sig`**：
+   图标位 = `档位|款式|图片地址`，名称行 = 文字本身。**指纹变了就撤掉重占**（这是唯一能把变化告诉宿主的手段），
+   **指纹没变就一个字节都不动**。粒度因此刚刚好：换图标只重挂图标位那两格，改名字只重挂名称行那格。
+
+   `ap-42`（换一枚必须重新占位；同一枚点第二次不许白重挂）与 `ap-43`（改名字不许连累图标位）咬住两头，
+   **M47** 是它的变异（改回"总是跳过"）。教训一句话：**「我这边的状态改了」不等于「宿主知道要重画」** ——
+   跨边界的组件，"重新注册"才是通知手段，别把它当成浪费。
+2. **「上传图片支持哪些格式要提示出来」** —— 老那句只写了大小和处理方式，没写格式。现在那句清单由
+   `LOGO_ALLOWED_MIMES` **派生**（`LOGO_MIME_LABELS` 把 mime 翻成给人看的名字），以后动白名单文案自己跟着走；
+   `ap-44` 咬这个同源关系，**M48** 是变异。顺带把旧那句 `自己的图片：…` 整个换掉（ap-44 反向断言它不许再出现）。
+
+### 第六轮（2026-10-04）：用户两条真机反馈 → 陈旧提示跟着状态走 + 名称行也能换图
+
+用户原话两条，各附一张红框截图：**①「如果切到别的图标了，这个要跟着变化，不要一直显示在这」**（红框圈的是方片下面那句绿字「已裁成方形 · 从 3284KB 压到 77KB」）；**②「这里也增加支持图片替换」**（红框圈的是名称行那一整行：标签 + 输入框）。
+
+第①条得先把根因说清：那行绿字**不是"忘了清"，而是"清的动作写在别处就一定会漏"**。它说的是"上一张图被处理成什么样"，可切回内置款式（星芒）之后，它跟当前选中的星芒一点关系都没有 —— 每一张图都要在"切档位 / 切内置款式 / 清图 / 换图"四条路径上各记得清一次，迟早漏一条。改法是把它变成**从状态派生的纯函数** `noteVisible(note, target)`：判据取"那一格现在画的**就是**这张处理出来的图"（`mark` 那格看 `mode === image`，`name` 那格看名称行真的挂着图）。于是四条路径自动都盖得住，以后新增路径也不用回来补。
+
+第②条是一个真正的分叉点，问过用户之后定的是**「图片优先，文字留着」**：有图时画图，但**文字一个字节不删** —— 清掉图片就自动回到他原来填的那段字，而不是回到空白。
+
+| # | 改前 | 改后 | 为什么 |
+|---|---|---|---|
+| 1 | 名称行只有文字一条路（输入框 + 「用这个」/「还原官方」） | 名称行那一格有**两张脸**：文字（原有那一组）+ 图片（`<label>` 包隐藏 file input + 缩略图 + 「清掉图片」）；哪张脸在生效就在哪个入口上点着选中态 | 用户 2026-10-04 点名要"这一格也支持图片"；`.ap-name-grp` 让两组各自成块，窄面板放不下时**整组换行**（不会被拆成两半） |
+| 2 | 名称行在渲染上只有一个输入（`brand.name`） | `runtime.brand` 多一个 `nameImageUrl`，新增纯函数 `nameArt() → 'image' \| 'text' \| null` 决定这一格画什么；新增 `setBrandNameImage(url)`（**只动图片**）与 `clearNameArt()`（还原官方时**两头都清**） | 「图片优先」是**渲染顺序**，不是"有图就把文字删掉"。只清文字不清图片的话，那一格还在画图 ⇒ 用户按了「还原官方」看着没反应 |
+| 3 | 图片只存一行（`logo` 表的 `current`） | `logo` 表多一行 `name`：`ROW_KEY_OF = { mark: 'current', name: 'name' }`，`writeLogo/readLogo` 带 `which`；`prefs` 加一个 `0/1` 开关 `brandNameImage` 决定"这张图算不算数" | 一格一行、各带各的 `updatedAt` ⇒ 换名称行那张不会让图标位那张白重取一遍。**开关与字节分开**是因为要支持"清掉图片"：字节不主动删（离线验不了宿主表句柄有没有 `delete`，见 §1 决策 22），所以"算不算数"必须另有一个可写的标记 |
+| 4 | 写名称行那张图之后，浏览器半边**再发一条 prefs** 去开开关 | 打开关这一步**并进宿主那条写图路由**（`if (which === 'name') await store.writePrefs({ brand: { nameImage: true } })`） | 原来那种写法下"图存上了"和"图启用了"是两条互不相关的请求，中间断一条就变成**图在库里、界面不认**（`hs-25`/`hs-28` 当场红）。顺带把 `writePrefs` 的 `mode` 也改成 `Object.hasOwn` 判存，让 `{brand:{nameImage:false}}` 这种最小 patch 合法 |
+| 5 | 那句处理结果写完就留着 | `noteVisible()` 从状态派生（见上）；两格各带各的 `target`，互不串线 | 用户第①条原话 |
+| 6 | 落点多、粒度粗：一批 `pickNote` / `pickError` 共用一个槽 | `pickNote` / `pickError` 都带 `target`，`noteFor` / `errFor` 按去处取；`busy` 从 `boolean` 变成 `'mark' \| 'name' \| null`（哪一格在转就说哪一格） | 两格同时存在时，"处理中…"必须长在**被操作的那一格**上 |
+
+**新增断言**（反向验证见 §6 的 M49~M58）：`ap-45` 图片优先 / 清图回文字 / 两样都没有还给官方；`ap-46` 重挂粒度（换图必须重挂那一格、图在时改文字**不许**重挂）；`ap-47` 两格共用同一条编码链、只差"裁不裁、框多大"（名称行不裁方 + 512×160 框 + 小图不缩放）；`ap-48` 那句处理结果跟着状态走、两格不串线；`ap-49` 两种清法不一样（清掉图片只清图、还原官方两头都清）；`ap-50` 写通道逐字段边界（三个 `*Touched` 开关）；`ap-51` 两个入口 / 还原官方在空态禁用 / 窄面板 flex-wrap；`hs-25` 两格图各存各的（URL 各带 `which`、字节一对一）；`hs-26` `?which=name` 没图 404 说清是哪一格、不认识的 `which` 当场 400、空 `which` 当缺省；`hs-27` 两格共用同一道 200KB 闸；`hs-28` 图与文字**两个都报**（宿主不替界面做二选一）；`hs-29` 最小 patch 逐字段判存。
+
+**改写断言**：`ap-15` 回报的 `logo` 尾巴多一句 `名称行=官方\|文字\|图片`（前缀与档位那段不动）；`ap-20` 加上两处 `LOGO_TARGETS` 的跨边界对齐；`ap-41` 的签名从 `uploadImage(file, after)` 改成 `(file, target, after)`；`hs-19`（名称行文字）**改号成 `hs-16b`**（原来它和图片那条撞了号）。
+
+**这一轮踩到的一个设计错误，值得单独记**（`hs-25` / `hs-28` 当场抓住）：我第一版让浏览器半边在**存完图之后**再发一条 prefs 去点开关。看着没问题，但"图存上了"与"图启用了"成了两条独立请求，任一条失败/竞态就是**库里躺着图、界面不认那一格**。修法不是在客户端加重试，而是**把这两件事收进同一个宿主路由**（写 `name` 那张图时顺手点开关）—— 幂等、原子、只有一处真相。教训：**跨半边的一条状态若由两次请求拼成，那它迟早会散。**
+
+**出图通道也跟着扩了一档**：`tmp/dom-shot.mjs` / `tmp/render-page.mjs` 的状态参数多了 `nameimg`（名称行那一格画图），用来把「换一张图」/「清掉图片」/那句"图片优先"的就地说明**在像素层核一遍** —— 这三句只有在这一态才渲染得出来，`chosen` 那屏永远看不到它们。
+
+### 第七轮（2026-10-04）：名称行改成「来源下拉」
+
+用户原话：「名称行的交互调整一下，用下拉，选择图片或者文字，不同的下拉选项对应不同的操作」，附一张真机截图（红框圈住名称行那一整行：标签 + 输入框 + 「用这个」+「还原官方」+「选图片」）。
+
+问题不在"功能不够"，而在**那四个入口平铺在一行**：它们其实分属两种互斥的用法（改文字 / 换图片），可用户得先自己看懂"哪几个现在是活的、点了会怎样"。上一轮把图片那一组加进来之后这一行就更挤了。
+
+改法：那一格引入一个**显式的来源** `nameMode ∈ { off, text, image }`，界面上就是**一个下拉**，选哪个才出现哪一组操作：
+
+| 下拉选项 | 落地状态 | 那一格画什么 | 右侧操作区 |
+|---|---|---|---|
+| **官方字标** | `name=null`、`nameImage=false` | 官方字标（一格都不占） | 无 |
+| **自定义文字** | `nameImage=false` | 有字画字；没字 → 官方 | 输入框 + 「用这个」 |
+| **自定义图片** | `nameImage=true` | 有图画图；没图 → **降级**画文字/官方 | 「选图片/换一张图」+（有图时）「清掉图片」 |
+
+| # | 改前 | 改后 | 为什么 |
+|---|---|---|---|
+| 1 | 四个入口平铺：输入框 / 用这个 / 还原官方 / 选图片 | 一个来源下拉 + 该来源的那组操作（永远只有一组） | 用户原话。三个选项就是那一格的三种状态，而"还原官方"本来也是其中一态 —— 收进下拉之后语义才完整，界面上也只剩"当前这件用法需要的控件" |
+| 2 | 那一格画什么由"谁非空"反推（`nameImageUrl ? 图 : 文字`） | 由**来源**决定：`nameArt()` 读 `nameMode` | 反推的写法表达不出"选了图片但还没选到图"这种中间态（下拉会立刻跳回上一项，看着像点坏了）；有了来源，"库里还躺着上次那张图、但用户刚选了文字"也能老实地按他说的画 |
+| 3 | 切来源会毁数据（清文字/清图） | 切到 `text`/`image` **只改来源**，文字与图片地址一个字节不碰；只有「官方字标」与「清掉图片」会真的清 | 从"图片"切到"文字"再切回来，那张图立刻又画得上（不用重选一次）。**切走不毁数据**是同一条精神的延伸 |
+| 4 | 「还原官方」是个按钮，空态时禁用 | 它是下拉里的「官方字标」——**选项永远可点**，点了就是把那一格还回去 | 禁用态是为了防"按了没反应"，而下拉里"选它"本身就是明确动作，不需要那道防御；顺带少一个按钮 |
+| 5 | 落盘：`nameImage = Boolean(nameImageUrl)` | `nameImage = (nameMode === 'image')` | 前者的语义是"库里有没有图"，后者才是"用户此刻用不用图"。切到"文字"时地址还留着，写成前者会让重启后自作主张切回图片 —— 用户选的来源就丢了 |
+| 6 | `setBrand` 重建 `runtime.brand` 时只接 `name` / `nameImageUrl` | 三个字段都得显式接过来（多了 `nameMode`） | 这是**本轮唯一一个真 bug**：`bootBrand` 先设来源、随后末尾那次 `setBrand` 把整个对象重建了一遍，`nameMode` 变成 `undefined` —— 表现是"点一枚标志，下拉就跳回官方字标"。ap-52 当场咬住（M59 是它的变异） |
+| 7 | （本轮第一版）选「自定义图片」就**顺手把文件框弹出来** | 选来源**只切那一格的状态**，弹不弹文件框只由用户点「选图片」那一下决定 | 用户装上后反馈："现在选择自定义图片就会弹文件框，应该是点击选图片才弹"。**"选来源"和"选文件"是两件事**：用户可能只是切过去看看、或切回来确认上次那张还在。第一版还专门写了"已有图时不弹"的补丁 —— 那是在给一个不该有的行为打补丁。删掉整个 `nudgeFilePicker`（一个函数 + 一处调用 + 两条注释），ap-53 咬这条（M65 是变异） |
+
+**新增断言**（反向验证见 §6 的 M59~M65）：`ap-45` 改写 —— 画什么由来源决定，含"库里还有图但来源选了文字就该画字"（这条是下拉相对"图片优先"唯一的实质差别）；新增 `ap-45b` 选了图片还没图时的降级（有字画字、没字回官方，都不许把那一格留空）；`ap-49` 补来源断言（清图片退到文字、没文字则退到官方；官方字标两头都清）；`ap-51` **重写**成下拉模型（三选项与 `NAME_SRC_LIST` 同源、一次只出现一组操作、图片入口仍是 `<label>`、那行就地说明三种来源各有话说、下拉自绘三角且读宿主令牌、三态齐）；新增 `ap-52` 来源与 `nameImage` 的落盘映射 + 开局从存档恢复（含"存档说用图但图没落住"要尊重用户的选择、降级画文字）；`ap-48` 补一条**新路径**：图还在库里、只是这一格换成了别的来源 ⇒ 那句处理结果必须消失；新增 `ap-53` **选「来源」本身不许弹文件框**（把 `setTimeout` + `document.getElementById(...).click` 两处装成探针，调四下 `onChange` 断言一次都没去点文件框）。
+
+`ap-53` 值得单说一句它为什么非写不可：**默认桩里连 `document.getElementById` 都没有**，所以第一版"选来源就弹框"的行为在套件里是**隐形**的（它调用时静默返回 `undefined`，什么都不发生）—— 那条 bug 是靠用户装上之后报出来的，不是靠用例。写这条断言时先把"文件框能被怎么打开"的两个入口都换成探针，才让这件事从"测不到"变成"测得着"。
+
+**出图通道同步扩了一档**：状态参数现在是 `default | chosen | nameimg | namepending`（`namepending` = 选了「自定义图片」但还没选到图，专门看那句"还没选图片"和降级后的样子）。读数里加了 `名称行来源`（下拉的当前值）与 `名称行入口`（此刻渲染出来的是哪几个 `data-ap-id`）—— **这两项让"一次只出现一组操作"变成机器可读的**。
+
+**这一轮抓到的一个出图通道的坑**：`<select>` 在 HTML 里**没有 `value` 属性**，浏览器只看 option 的 `selected`。我们的 `ser()` 老老实实把 `value="image"` 落成了属性 —— 于是那屏出图里下拉**显示的是第一项"官方字标"**，而读数（`document.querySelector('.ap-name-sel').value`）也跟着报 `off`。**这条要是没发现，我会拿着一张错的图说"下拉已经对了"。** 修法是在序列化层把受控 select 的 `value` 翻成对应 option 的 `selected`（React 那套 value 在静态 HTML 里不存在）。记在这里的原因：**出图通道自己也会骗人，读数与图要能互相对上**。
+
+### 同日补丁（2026-10-04）：配色区把「不覆盖」提到第一位
+
+用户原话：「配色中的不覆盖默认放第一个」。
+
+改前那一排卡是 `[...8 张皮肤, 不覆盖]` —— 默认生效的「不覆盖」反而在**末尾**。改后是 `[不覆盖, ...8 张皮肤]`（§1 决策 25）。**这个顺序在两处各写了一遍**，所以两处都改了：
+
+| 处 | 文件 | 说明 |
+|---|---|---|
+| 宿主声明 | `lib/skins.js` 的 `skinChoices()` | 顺序的"声明"。**注意它其实只被测试读**，真机载荷里 host 发的是 `skins`（不含不覆盖）+ `noneSkinId`，界面顺序由 client 拼 |
+| 界面实际 | `client.js` 的 `choices` | 真机上画出来的那一排顺序 |
+
+正因为是两处，**只钉一处迟早会漂** —— 所以 ap-30 里加了一条**交叉断言**：拿界面上卡片的 `data-ap-id` 顺序直接比 `skinChoices().map(c => c.id)`，谁漂了这条就红。这也顺手把"「不覆盖」在首位"钉死在界面上（`cardIds[0] === SKIN_NONE_ID`）。`sk-6` 同步改口径（从"最后一项"改成"第一项"，并加一条"皮肤表自己的顺序不许被打乱"）。
+
+**出图复核**：`default-light.png` 左上角第一张就是「不覆盖」（带选中勾），读数 `配色卡:9` 不变；`ap-30` 的预览块断言下标随之从 `slice(0, N)`/`at(-1)` 改成 `slice(1)`/`[0]`（不覆盖在前，皮肤在后）。
+
+---
+
+## 0. 一句话
+
+改这个应用**长什么样**：配色皮肤走宿主官方的 `ctx.theme` 覆盖层，侧栏与首屏的品牌标志走官方 brand slot。不写宿主文件、不注入全局 CSS、不碰用户系统。
+
+第一期范围是用户在三个候选里选的「只做主题配色 + logo」，被否掉的是「壁纸/背景图」「exe 与托盘图标」。
+
+---
+
+## 1. 范围与已锁决策
+
+| # | 议题 | 选定 | 理由 | 被否掉的方案 |
+|---|---|---|---|---|
+| 1 | 换肤机制 | `ctx.theme.overrideTokens(source, {令牌: {light, dark}})` 叠一层 | `ThemeDefinition` 一份只带**一个** colorScheme，注册新主题 id 就得放弃内置「明亮/暗黑/跟随系统」那一行；overrideTokens 的层两档都带，用户照旧切明暗、皮肤跟着换 | `register(ThemeDefinition)`（与内置偏好互斥） |
+| 2 | logo 替换 | **只占两格图标位** `sidebar.brand.mark` / `conversation.hero.brand.mark`，自绘组件；**默认一格都不注册**，用户挑了才以 -1 上位，挑回「原样」把注册撤销 | 这两格是官方扩展点，宿主规则「同格按 priority 升序，**最低的那条渲染**」，官方品牌包用默认 0 ⇒ 我们注册在 -1 就盖得过。默认不占是用户 2026-10-03 的第二轮裁定「log 和外观进来默认还是原样」—— 所以注册是**命令式**的（`syncBrand`/`clearBrand`，账在 `runtime.brandRows` + `brandDisposers`），不是装配时挂上去再也没法撤 | 全局 CSS 隐藏官方 SVG（官方面之外，宿主改版就跟不上）；启动即注册（用户没点就把人家 logo 换了） |
+| 3 | 「HARNESS」那块黑底徽标 | ~~不动~~ → **第五轮起可换**：等 `sidebar.brand.name` 的声明，用户填了字才占、留空即还（见决策 19） | 第二轮按"没勾就不动"撤过这一格；用户 2026-10-04 看过真机截图后点名要它可换，**原裁定作废**。ap-16 现在咬的是"等三格声明、但默认三格都还是官方的" | ① 随 `sidebar.brand.mark` 一起换（会把整行字标替掉 —— 现在两条通道各自独立，不联动） |
+| 4 | 皮肤表放哪 | `lib/skins.js` 唯一出处，宿主半边每次现算着推给浏览器半边 | 两份各存一份必然漂移（sysops 同款铁律）；hs-5 就钉这条 | 浏览器半边自带一份表 |
+| 5 | 生效判据 | 只认 `getTheme().active.tokens`（宿主折完所有层、按当前档挑好的那份） | 「送进去了」≠「生效了」；ap-17 专门验被别的层盖住时必须报「没生效」 | 以调用没抛错当成功 |
+| 6 | 真机复核通道 | 浏览器半边 `POST /appearance/api/report` 回报 → 宿主半边内存缓存 → 一次 `GET /api/state` 读回 | 本项目铁律：真机宿主探针**只允许 GET**（曾有探针漏 `.data` 信封把 prefs 整行覆盖成空的血案） | 真机跑脚本发 POST / 改文件 |
+| 7 | 持久化 | **接**（用户 2026-10-03 第二轮裁定「接，记住我选的」）：宿主 `ctx.storageDomain` 一个 domain `appearance_prefs`，两张表 `prefs`/`logo`，行 key 固定 `current`；开局由浏览器半边 `GET /api/prefs` 取回，**存档只是覆盖默认值**，读不到就按原样 | 官方原文「Third-party theme ids remain an in-process extension and do not cross the built-in settings schema」⇒ 覆盖层自己不会跨重启，只能插件侧存 id 再在开局叠。默认值仍是"原样"，所以这条请求失败最多丢一次恢复，不影响界面可用（ap-23、M13） | ① 第一期不持久化（第一轮的做法，已被第二轮裁定取代）；② 存宿主 settings（第三方跨不过内置 schema，§2 原文）；③ 开局猜一张默认皮肤（用户没选就把配色改了） |
+| 12 | logo 自定义做到哪一步 | 两档：**内置六枚里挑**（`lib/marks.js`）+ **选本地图片**（PNG/JPEG/WebP/SVG）。图片只走 `<img src>`，宿主路由 `GET /api/logo?v=<updatedAt>` 送字节。**第五轮起输入的格式放开了**：收任意 `image/*`（原图 ≤10MB），浏览器侧先裁先压成不超过 200KB 的成品再送，所以白名单现在管的是**成品**而不是用户原文件 | 用户明确勾了这两条（名称行是第五轮另开的决策 19）。六枚只用 `brand-primary` + `label-primary-inverted` 一对色，皮肤换了标志跟着换色且始终读得清（sk-10 卡着那对 ≥4.5:1） | 让用户手填图片 URL（等于开一条任意外链）；把 SVG 当 HTML 注进页面（内嵌脚本会跑） |
+| 13 | 用户图片这道门验几遍 | 浏览器先挡（立刻给话）+ **宿主重新验才算数**：类型以 data URL 前缀为准、与声明的 `mime` 不一致就拒、白名单、解码后 ≤200KB；响应带 `x-content-type-options: nosniff` | 那条路由谁都能调，而落库的是宿主自己的目录；响应头更不能让调用方各说一份（M17/M18 是这两条的变异）。**第五轮把浏览器那一侧从"只验大小"升级成"先裁先压"（决策 20），但宿主这四个验点一个没少** —— 浏览器送来的仍要重新验，因为它送的东西也可能是自己拼的 | 只信浏览器送的 `mime` 字段 |
+| 8 | 背景图 / 字体 | 第一期不做 | 资源送达浏览器的方式没定（同源路由还是 data URI），且那要往页面注入非官方样式（§5-U4） | CSS 注入 `background-image` |
+| 9 | Windows 桌面壁纸、exe/托盘图标 | 不做 | 前者要起子进程改系统状态；后者是安装目录里的 `resources/icon.png`/`tray.ico`，改了属**打补丁**不属插件，且自动更新会还原 | 写注册表 / 改安装包 |
+| 10 | 窗口标题栏那个名字 | 不做 | 构建期常量 `DSH_CLIENT_TITLE`，不在 slot 系统之内 | 运行时改 title |
+| 11 | 面板上的文案 | 只留跟使用有关的：状态卡「配色 / 明暗 / 生效处数 / 标志」，抽查三行「页面底色 / 正文字色 / 强调色」；`--dsw-alias-*`、slot 名、priority、`GET /api/state`、"骨架版"一律不上界面 | 用户 2026-10-03 两条裁定：① 删掉「宿主回报回读」那张卡（那是我的复核脚手架，不是用户功能）；② 去掉页面上跟使用无关的文案。ap-19 与 M10/M11 钉住别长回来。**那段 Disclosure 按用户「保留原样」留着**，里面确实提 `ctx.theme` / `brand slot`，ap-19 因此只排除这两段 | 把开发期读数当界面信息摆出去 |
+| 14 | 面板滚动（第三轮，用户 2026-10-03 看图后的四条裁定之一） | `.ap-root` 自己滚动：`box-sizing:border-box; height:100%; overflow-y:auto; overscroll-behavior:contain`，直接子项 `flex:none`。**不许出现 `100vh`** | 真机实测：宿主把它渲染进 `.BynINW_centerCol{display:flex;flex-direction:column;min-width:0;overflow:hidden}`，格子本身不滚；而外层 `.BynINW_frame{height:100%;grid-template-rows:100%}` 在 Windows 上还 `padding-top:var(--dsh-windows-titlebar-height)` ⇒ 拿 `100vh` 当高度必然把尾巴顶到屏幕外（用户截图里"标志"那行标题被切掉、又没有滚动条，就是这条）。配方抄官方入口页 `.fO69Vq_page{box-sizing:border-box;height:100%;display:flex;flex-direction:column;overflow:auto}`。ap-28 钉这四条 + 反向钉 `100vh`，M23 是"去掉 overflow-y:auto"的变异 | ① `max-height:100vh`（股票插件那边的写法，本插件第一轮抄过，被真机高度证据否掉）；② 靠宿主外层格子滚（那是 `overflow:hidden`，不滚） |
+| 15 | 卡片同级等高、脚注钉底 | 配色卡是**整张可点的单选项**（卡里不嵌按钮），脚注 `.ap-skin-foot{margin-top:auto}`、网格 `.ap-cards{align-items:stretch}` | 用户第 2 条原话是「按钮一个高一个低」，根因是同一行卡片文案长短不一。**第四轮把卡里的按钮整个删掉之后**，"齐平"这条不变的对象换成了脚注（`改 24 处配色`）。真机/离线读数：同一网格行里脚注 y 完全相同（§6）；M24（删 `margin-top:auto`）与 M28（脚注换类名）是这条的两个变异 | 给按钮写死 `top`/`translateY`；把说明文字截断成一行（那是为了对齐牺牲信息） |
+| 16 | 分区顺序 | **标志在前、配色在后** | 用户第 3 条裁定。ap-29 钉两节标题的顺序**和** `.ap-marks` 的 DOM 下标小于 `.ap-cards`，M25（把"标志"写成"配色"）与 M26（改容器名）是这两条的变异 | 按"配色更显眼"排前面 |
+| 17 | 配色卡片怎么画预览 | 每张卡内嵌 `SkinSwatch`：用**这张皮肤自己的令牌值**画一个微缩页面（侧栏条 + 正文两行 + 强调色点 + 按钮条），明暗档跟着当前档现算；只有「不覆盖」那一格读 `var(--dsw-alias-…)` | 用户第 4 条：「配色对应框用对应的颜色渲染，这样一看就知道是什么效果」。这是「颜色一律读宿主令牌」这条红线的**唯一、且就地声明的例外** —— 预览框的任务就是显示皮肤自己的颜色，不是显示宿主当前色。ap-30 逐张比快照 `bg-base`/`button-primary-fill` 等于皮肤表、8 张互不相同，并且切到暗档后必须跟着变（M27 是"永远读 var()"的变异，M29 是"档位写死 light"）。**第四轮把预览块从 60px 长到 88px**（多画一行正文 + 一个次级按钮块），取色口径一个字没改 | 只画色块小圆点（看不出整站效果）；拿 CSS 变量名当预览（等于没预览） |
+| 18 | 界面与交互的形态 | **以本文件顶部「第四轮」那张表为准**（整片可点、页头摘要当反馈落点、三态齐、根容器不挂 key、`role=radio` + 方向键）；第五轮的界面增量同样以「第五轮」那张表为准 | 用户 2026-10-03 第四轮原话「太丑了，页面交互不行」。这六条改的是**同类问题的形态**，不是新功能 —— 所以放在上面按"改前/改后/为什么"逐条记，§1 不重复列举，避免两处漂移 | 只调颜色间距的"美化"（没解决按钮权重与反馈落点，用户还会再提一次） |
+| 19 | 名称行（`sidebar.brand.name`）换不换 | **换，但只在用户填了字之后**：那一格与两格图标位**各自独立**判断 —— 图标看档位（`mode !== off`），名称行看 `runtime.brand.name` 非空。文档里留空 = **还给官方**（不是换成空字符串）。字数上限 24（`lib/marks.js` 的 `BRAND_NAME_MAX`，两端同值由 ap-20 咬） | 用户 2026-10-04 明确要它可换（决策 3 的原裁定作废）。"填了才占"保住了「默认什么都不改」这条总红线 —— 没填字，那一格连 `inject` 之外的任何动作都没有 | ① 装配时就占上（用户没填也把官方字标顶掉）；② 与图标档位联动（换图标顺手改名字，或反过来）；③ 允许空字符串当"已设置"（那样官方字标永远回不来） |
+| 20 | 传图自动裁切压缩 | **在浏览器半边做，零新依赖**（canvas 是原生能力）：原图 ≤10MB → 居中 cover 裁成方形 → 缩到 `min(512, 短边)`（**只缩不放大**）→ 沿质量阶梯（0.92→0.45）压到 ≤200KB；有透明出 **WebP**（保 alpha）、不透明出 **JPEG**、**SVG 原样保留矢量**（只在它自己超限时才位图化，那种多半已内嵌了位图）。宿主那道 200KB 的闸**一个字不改** | 用户 2026-10-04 提的原话。把闸留在宿主那边是刻意的：压缩只是"让合规的图更容易进来"，不是"让宿主放宽标准"。裁成方形是因为两格图标位本来就是方的（`{size:number}`）。SVG 不位图化是**保质量**：矢量本来任何尺寸都清晰，转成 512 位图只会更糊 | ① 引 `sharp`/`jimp` 之类图像库（撞"零第三方依赖"这条铁律）；② 把宿主那道 200KB 的闸放宽（等于让"这条路由谁都能调"失去防护）；③ 一律输出 PNG（无损但体积下不来，压不进 200KB）；④ 裁切不居中（长方形图会缺半边） |
+| 21 | 槽位里的内容变了，怎么让宿主知道 | **按指纹重挂**：每一格算一个 `sig`（图标位 = `档位\|款式\|图片地址`，名称行 = 文字本身），`sig` 变了就 `dispose()` 之后再 `register()`，没变就一个字节都不动 | 宿主只在**注册表变化**时才重画，而我们注册的组件读的是模块级 `runtime` —— 光改自己这边的状态它看不见。第五轮第一版按"纯差集"写（想法是"改名字时图标位别闪"），真机上直接表现成**「点了一枚标志，再点另一枚就不生效」**（完整根因在 §5 之前那段）。指纹就是这件事的**粒度**：换图标只重挂图标位两格，改名字只重挂名称行那格，两边互不打扰 | ① 每次变化全量重挂（改名字会让官方 logo 白闪一下）；② 纯差集 / 指望宿主读我们的模块级状态（真机已证伪，ap-42 咬）；③ 把状态塞进 owner props 让宿主自己去 diff（那几格的 props 契约是宿主固定的，塞不进去） |
+| 22 | 名称行那一格的「文字 / 图片」两张脸怎么共存（第六轮，用户 2026-10-04 选定） | **图片优先，文字留着**：两个都非空时画图；文字（`brand.name`）一个字节都不删，清掉图片就自动回到它；两个都没有时那一格仍归官方字标。存储上**一格一行**（`logo` 表的 `mark` / `name`）＋ `prefs` 里一个 `0/1` 开关 `brandNameImage` 决定"那张图算不算数" | 用户在两个候选里选的这个（另一个是"有图就把文字清掉"）。留着的理由是**可逆**：用户传了张图、又觉得不如原来的字，点「清掉图片」该回到他原来那段字而不是空白。开关与字节分开，是因为「清掉图片」之后库里那张图的字节**不主动删** —— 宿主表句柄有没有 `delete` 离线验不了（`dsh-plugin-stock-analysis` 那边只实测过 `get/put`），而 `put` 是已在用的能力；代价是那张图最多 200KB 不回收，写在 `lib/store.js` 的注释里。**"现在用不用图"这件事只有 prefs 那一个开关说了算**，不看"logo 表里有没有 `name` 那行"（否则「清掉图片」重启后就会失效） | ① 有图就把 `brand.name` 抹成 `null`（用户回不去，且违反"两件事各管各的"）；② 用 `table.delete` 删字节（能力没实测，赌不起）；③ 把两张图塞进同一个字段 |
+| 23 | 那句"处理成什么样了"（已裁成方形 · 从 X 压到 Y）什么时候该显示（第六轮，用户报的 bug） | **从状态派生**：`noteVisible(note, target)` 是纯函数，判据是"那一格现在画的**就是**这张处理出来的图"—— `mark` 那格看 `mode === BRAND_MODE_IMAGE`，`name` 那格看名称行真的挂着图；两格各带各的 `target`，互不串线 | 用户截图报的原话是「切到别的图标了，这个要跟着变化，不要一直显示在这」。旧写法（在 `chooseMark` / `resetName` / 清图片里各自记得清一次）**一定会漏**—— 这类"必须在每个动作里记得清"的写法在本文件里已经犯过（第五轮的 `syncBrand` 纯差集就是同族）。派生写法下任何路径都盖得住，以后新增路径也不必回来补 | ① 在每个动作里手动清（用户的报法就是它的必然结果）；② 干脆不显示这句（那"自动处理了什么"就变成黑箱，违反"自动处理必须说出来"这条红线） |
+| 25 | 配色区里「不覆盖」排第几（用户 2026-10-04 要求） | **排第一**（`skinChoices()` 与 `client.js` 那份选择列表都是"不覆盖 + 各皮肤"）。它是**进来默认选中的那一项**（默认档 = 原样），排首位才能让用户一眼把"现在生效的"和"第一张卡"对上 | 用户原话「配色中的不覆盖默认放第一个」。这不是排列偏好问题：默认生效项落在末尾时，用户扫一眼容易以为选中的是别张 —— 而且"不覆盖"是**现状**（什么都不叠），皮肤才是"额外叠一排可选项"。**这个顺序在两处各写了一遍**（宿主 `skinChoices()` 是声明、`client.js` 是界面实际画的），所以 ap-30 直接拿 `skinChoices()` 比对界面上卡片的 `data-ap-id` 顺序 —— 谁漂了就红（M66 改 client 那处、M67 改宿主那处） | ① 按字母/拼音排（默认项不在首位）；② 把"不覆盖"从列表里拿掉、单独做成一个"还原"按钮（那样它就不再是"当前状态"的一部分，用户看不出"现在没叠任何层"） |
+
+---
+
+## 2. 官方扩展点事实清单（每条都有出处）
+
+**theme（`@deepseek-ai/dsh-client-ui-theme`）**
+- `ThemeRuntime` 面：`getTheme()` → `ThemeSnapshot{preference, fontSize, active:{id, colorScheme, tokens}, themes, revision}`；`setTheme(id)`；`setFontSize(px)`（12–17 硬夹）；`register(ThemeDefinition)`；**`overrideTokens(source, tokens)`**；`exportInspectTokens()`（asar 内命中，作复核用）；事件 `theme/change`。
+- 缺档会抛：guard 原文 —— `theme.overrideTokens(source, tokens) takes two arguments; source is replaced with your package id, so pass any string first and the token map second`，且裸字符串值抛「teaching error」⇒ 两档必须都给。
+- 叠层顺序原文：`the override layer folds into the active snapshot's tokens in registration order. Removing one never overwrites the last durable built-in preference. Third-party theme ids remain an in-process extension and do not cross the built-in settings schema.`
+  ⇒ 三条推论都落进了实现：后叠的赢（ap-17）、摘层不动内置偏好（ap-10）、第三方 id 跨不过内置 settings schema（所以第 7 条决策「持久化要插件侧自己存」）。
+- 消费者写法（desktop asar 内联 shell 代码，原文节选）：`const presenter = new ThemePresenter(); presenter.apply(ctx.theme.getTheme()); const off = ctx.on("theme/change", (snapshot) => { presenter.apply(snapshot); });`，且该包导出 `inject: string[]`（类型文件 `lib/types/client/index.d.ts:194`）⇒ 本插件用软注入 `ctx.inject(['theme'], cb)`，服务缺席就不装配皮肤层（ap-12 验降级）。
+
+**slots（`@deepseek-ai/dsh-client-ui-slots`）**
+- `SlotKind = 'single' | 'list' | 'keyed' | 'chain'`。
+- 遮蔽规则运行时原文（`lib/index.js:167-176`）：`const priority = options.priority ?? 0;` … `single slot "X" already has a registration at priority N (registered by Y) — register at a different priority to shadow it (lowest renders)`；排序在 `lib/index.js:221`（升序）。
+  ⇒ 官方品牌包不传 priority（= 0），我们传 -1 才成「最低者」；**运行时对负数没有任何校验，也没有 clamp**（那几行只 `?? 0`），所以「负数能不能被接受」是纯真机问题（§5-U1）。桩把报错原文照抄了英文（`test/_stubs.mjs:132-140`）—— 换成中文措辞就等于在测桩的措辞。
+- 未声明的格子直接抛：`slot "X" is not declared (a parent entry's children table must declare it)`（`lib/index.js:165`）。桩目前不模拟这条（§5-U5，见「待办」）。
+- `sidebar.panellist`：**list** 槽，字段 `id` / 可选 `order` / `label`；`SlotLabel` = 字符串或**每次读取时重算的 thunk**（`lib/types/index.d.ts:551-568`）。宿主自己的插件面板就是这么写的：`{ name: "sidebar.panellist", id: PANEL_ID, order: 0, label: () => t("panel"), locale: NS }` —— 我们传 `label: () => cfg().label || '桌面外观'`，不带 `locale`（没有 i18n 命名空间）。
+- 面板打通的口径（asar 内文档原文）：`同一个 id 寻址布局中 root 作用域 main keyed slot 的组件；选择不存在的主面板条目会抛错，并保留当前选中态` ⇒ `sidebar.panellist` 的 `id` 与 `main` 的 `key` 必须同值（都用 `PANEL_ID = 'appearance'`），ap-4 钉这两处都注册。
+- brand 三格都是 **single**：`sidebar.brand.mark` 的 owner props 是 `{ size: number }`（展开行与折叠竖条共用同一填充，只是 size 不同 → §5-U3），`sidebar.brand.name` 的 props 是 `{ children?: never }`（内容与宽度归占位者），`conversation.hero.brand.mark` 独立声明。官方品牌包 client.js 的写法是嵌套 inject（侧栏两格一起等声明，首屏那格单独等）；本插件照该口径等**两格图标位**，名称行不发 `inject`（ap-16 钉这条）。
+
+**storageDomain（`@deepseek-ai/dsh-storage-domain`）** —— 事实与坑全部继承自 `dsh-plugin-stock-analysis/docs/host-capabilities.md:111-235`（那边是实测出处，本插件只是复用结论）：
+- 实现里**零 `instanceof`**：`defineDomain(spec)` 校验完形状就 `return spec`，`domainTable(schema)` 就是 `{valueSchema: schema}`，`open(spec)` 只读 `spec.name/tables/global/invalidRecords/layout/compatibleVersions` ⇒ 插件自己造一个同形对象即可（`lib/schema.js` + `lib/store.js`），守住「宿主半边零 `@deepseek-ai/*` import」。schema 只需要 `.parse` / `.safeParse`（返回 `{success}`）两个面，不引 zod 也不引 schemastery。
+- 名字必须匹配 `/^[a-z][a-z0-9_]*$/`；本插件用 `appearance_prefs`（宿主已占 `workspace`/`schedule`，其余插件另用 `stock_analysis*`，都不撞）。
+- **domain 名全局唯一且排他**：重复 `open()` 报 `already-open`；`close()` 返回 promise 且**必须 await**，否则重载插件时打不开（hs-23 钉这条：卸载后同名再 open 要能成）。
+- **读同步、写持久**；`put()` 这一侧**不做 schema 校验** ⇒ 每次写之前自己 `valueSchema.parse()`（`lib/store.js` 两处 put 前各一发）。
+- 落盘位置由宿主决定（现路由到 `storage-json` ⇒ `~/.dsh/storages/appearance_prefs.json`），插件不假设格式。
+- 取设施用软注入 `ctx.inject(['storageDomain'], …)` 存下来，**每次用时现取**：Context 是代理，没 inject 就读会抛 `cannot get property "storageDomain" without inject`（`lib/store.js` 的 `facilityOf()` 兜住它，取不到就 `available=false`，界面上写明「这台机器上存不住」）。
+
+**brand 三格**（第二轮定的两格 + 第五轮加的第三格，见 §1 决策 2/3/12/19/22）：`sidebar.brand.mark` / `conversation.hero.brand.mark` 各 `single`、owner props `{size:number}`；`sidebar.brand.name` 也是 `single`、owner props `{children?: never}`。三格都**默认不占**，用户有选择（图标看档位、名称行看那一格有没有内容）才以 `priority:-1` 注册。
+
+**宿主页面骨架（第三轮从运行中的 desktop 0.2.0-rc.2 asar 现抽，出处是 `tmp/asar-find.mjs` + `tmp/asar-css.mjs` 那两条一次性取证脚本）**
+- 面板被渲染进 `.BynINW_centerCol{flex-direction:column;min-width:0;display:flex;overflow:hidden}` ⇒ **这一格自己不开滚动**，内容超高就被裁。这就是用户截图里"标志那行被切一半、又没滚动条"的机制。（同源旁证：股票插件 `client.js:264-266` 早就写下"宿主 centerCol 是 overflow:hidden"。）
+- 外层 `.BynINW_frame{…display:grid;position:relative;overflow:hidden;height:100%}`，Windows 那一支还带 `box-sizing:border-box;padding-top:var(--dsh-windows-titlebar-height)` ⇒ **`100vh` 一定比可视区高**（多了标题栏那一条），尾巴滚不到。别处的 `max-height:100vh` 写法在这里是错的。
+- 官方入口页的配方（`ConversationHero` 那族，class `.fO69Vq_*`）：`.fO69Vq_page{box-sizing:border-box;height:100%;display:flex;flex-direction:column;overflow:auto}` —— 即**页面自己撑满格子并自己滚**；页头另用 `.fO69Vq_pageHead{padding-top:calc(28px + var(--dsh-frame-top-clearance,0px))}` 让开标题栏，宿主对主页面板发布 `--dsh-frame-top-clearance`（macOS `48px` / Windows `var(--dsh-windows-titlebar-height)`）。本插件的 `.ap-root` 抄的就是这一族（§1 决策 14）；页头没做 clearance 内缩，因为面板自带标题行、且 `height:100%` 已经把标题栏那条扣在外面了。
+
+**令牌全集**
+- `test/fixtures/host-tokens.txt`：**120** 个 `--dsw-alias-*`，从运行中的 desktop asar 抽的（0.1.7 web 只有 99 个，不许拿它当基线）。其中 3 条是模板前缀伪项（`--dsw-alias-file-diff-` / `--dsw-alias-scrollbar-` / `--dsw-alias-turn-trigger-`，尾字符是 `-`），剔掉得 **117** 个真令牌 —— sk-11 钉这个算术，sk-2 钉「皮肤表里写的每个令牌名都在这 117 个里」。
+- 八张皮肤各覆盖 **24** 个 ⇒ 其余 93 个露出内置配色，页面上就地写明（`Disclosure` 第 ③ 条），不假装整站换肤；ap-18 钉「界面文案里的数字必须与皮肤表/夹具算出来的一致」。
+- `test/fixtures/host-token-values.json`：**113 条令牌的内置实际值（light/dark 各一份）**，由 `tmp/extract-token-values.mjs` 从同一份 asar 抽（比上面那份"名字清单"少 4 条：那几条只有模板前缀、没有落地值）。**只有离线出图通道 `tmp/dom-shot.mjs` 用它** —— 出图需要一个真的能画出来的底色，断言套件仍按名字基线走（两者基线不同是刻意的，别把它们并成一个）。宿主升级后要重采一次，`_note` 里写了这条。本轮抽查到的**暗档关键取值**（将来核对暗档对比度/悬停底色时直接引用，不必再跑脚本）：`bg-base rgb(21,21,23)`、`bg-layer-1 rgb(35,35,36)`、`border-l2 #ffffff1f`、`brand-primary rgb(249,250,251)`、`label-primary-inverted rgb(53,54,56)`、`state-error-primary rgb(242,90,90)` —— 注意暗档的 `brand-primary` 是近白、`label-primary-inverted` 是深灰，正好是 sk-10 卡 4.5:1 的那一对（§4 末）。
+
+---
+
+## 3. 结构
+
+```
+package.json          dsh.client.{platform:'web', immediately:true, inject:[theme, renderer, sidebar 的包名]}
+cordis.yml            - insert: [{id: appearance, name: dsh-plugin-appearance}]   ← 只写挂载形状，没执行
+index.js              宿主半边：inject=[] 零硬注入；软注入 webServer 开 /appearance 前缀、软注入 storageDomain 开存档；
+                      webserver/index-inject 推 __APPEARANCE__ 载荷（routeReady 为假就不推；只推静态表 + store.available）
+lib/api.js            路由表 + GLOBAL_KEY + 回报字段白名单（6 键，单值折到 240 字符）+ logoInput()（宿主这道门重新验图片）
+lib/skins.js          皮肤表（一份真相，8 张 × 24 令牌）
+lib/marks.js          内置标志六枚的清单（id 是存进库的值，改名不改 id）+ BRAND_NAME_MAX（名称行字数，跨边界常量）
+lib/schema.js         自造的最小校验器（defineDomain/domainTable/record/requiredString…）—— 官方零 instanceof 检查才敢这么接
+lib/store.js          选择存档：domain appearance_prefs，两张表 prefs / logo（prefs 的 skinId / brandMode / brandMarkId / brandName / brandNameImage 五个字段各自可选；
+                      logo 表两行：mark=两格图标位那张、name=名称行那张，ROW_KEY_OF 映射，writeLogo/readLogo 带 which）；四个生命周期坑逐条实现
+client.js             浏览器半边：皮肤层 + 两格图标位与名称行（来源 off/text/image 三态）的按需注册/撤销 + 图片自动裁切压缩 + 面板页 + 存档读写 + 回报
+                      syncBrand 按**指纹 sig** 决定重挂（图标位 sig = 档位|款式|图片地址，名称行 sig = 画图时 image|图片地址、画字时 text|文字；
+                      sig 变了就撤掉重占 —— 那是唯一能把变化告诉宿主的手段，没变就一个字节不动；见 §1 决策 19/21/22 与红线）
+                      nameArt() 由**来源**决定名称行画什么（'image'|'text'|null，选了图片还没图时降级）；
+                      setBrandNameSource() 换来源（切 text/image 不毁数据）；noteVisible() 决定那句处理结果显不显示（都从 runtime 派生，纯函数、离线可断言）
+                      界面：Head（标题 + 一行状态摘要 + 就地红字条）/ LogoSection（标志方片 + 名称行**来源下拉**，排前）
+                            / 配色单选项网格 + SkinSwatch（排后）/ StatusCard（生效核对）/ Disclosure
+                      .ap-root 自管滚动（height:100% + overflow-y:auto），**根容器不挂 key**（挂了会把滚动位置丢掉）
+                      卡片/方片是 button[role=radio][aria-checked]，方向键走 radioKeys；配色脚注 .ap-skin-foot 用 margin-top:auto 钉底
+test/                 skins(12) / plugin(31) / client(55) = 98 条 + _stubs.mjs + fixtures/host-tokens.txt（名字基线）
+                                + fixtures/host-token-values.json（内置实际值，只给出图通道用）
+tmp/mutation-check.mjs 变异电池（67 条）+ 前置检查（干净套件本来是不是绿的）
+tmp/mutation-points.mjs 电池前置：逐条核对每个变异点还能不能唯一命中（改完源码先跑）
+tmp/render-page.mjs   按出现顺序打印面板上每一句文案（文字走查）
+tmp/contrast-report.mjs 8 张皮肤 × 两档的对比度读数
+tmp/dom-shot.mjs      离线出图：真组件 → HTML → 宿主框架副本 → headless Chrome 截图 + 度量读数
+                      （状态参数 default|chosen|nameimg|namepending；含读数项「名称行来源/入口/缩略图/提示」。
+                        序列化层把受控 select 的 value 翻成 option 的 selected —— HTML 里 select 没有 value 属性，
+                        不翻的话出图上显示的是第一项，而读数也跟着报假值）
+tmp/png-crop.mjs      零依赖 PNG 裁剪放大（一次性：把用户截图里的红框裁出来读字；PowerShell Add-Type 在受限环境被拦，所以自带解码器）
+tmp/asar-find.mjs / tmp/asar-css.mjs / tmp/extract-token-values.mjs 对运行中 asar 的一次性取证脚本（§2 那几条骨架事实的出处）
+```
+
+四条路由（全部在 `/appearance` 前缀下）：`GET /api/state`（真机复核只读这条）、`POST /api/report`（浏览器回报）、`GET|POST /api/prefs`（读/写选择）、`GET|POST /api/logo`（送图 / 取图字节，**带 `?which=`**：缺省 / 空串 = `mark`（两格图标位那张），`name` = 名称行那张，别的取值当场 400 不许静默回落）。图标位那条 URL 与第五轮一字不差（`?v=N`），名称行是 `?which=name&v=N`。
+
+数据流：`lib/{skins,marks}.js` → `index.js` 载荷 → `client.js` 装配（**默认原样**）→ `GET /api/prefs` 取回存档 → 有选择才叠层/占格 → 用户点 → `applySkin`/`setBrand`/`setBrandNameSource`/`setBrandName`/`setBrandNameImage`/`uploadImage`（先裁先压，再 `POST /api/logo?which=…`；写 `name` 那张图时宿主顺手把 `prefs.brandNameImage` 点上）+ `POST /api/prefs` → 浏览器读 `getTheme().active.tokens` 抽查 → `POST /api/report` → 宿主缓存 → `GET /api/state` 供真机复核。
+
+**开局时序**：`index-inject` 是同步的，只能带静态表（皮肤/标志/`defaultSkinId:'none'`/`store.available`）；存档里的选择由浏览器半边异步 `GET /api/prefs` 取。所以有一条 `runtime.userChose` 闸门：**用户已经点过，迟到的存档不许盖掉他的选择**（M13 咬这条）。副作用是首帧必然先亮原样、存档回来才变 —— 这是"默认原样"这条要求的直接代价，界面上不假装。
+
+**还留空的**（不是漏）：背景图/字体资源通道（§5-U4）、`slots.register` 对未声明格子的桩行为（§5-U5）、Windows 壁纸与 exe/托盘图标（§1 决策 9）。
+
+---
+
+## 4. 皮肤表与标志表
+
+皮肤 **8 张**，每张 24 个令牌、每令牌 `{light, dark}`；`none`（不覆盖）不是皮肤，是排在**最前**的选项（进来默认选中的就是它，见 §1 决策 25）：
+
+| id | 名 | 强调色 light / dark |
+|---|---|---|
+| `ink` | 墨蓝 | `#1E4FA8` / `#9CC0FF` |
+| `moss` | 苔绿 | `#2F6B45` / `#86D3A2` |
+| `slate` | 石墨 | `#35383F` / `#D6D8DE` |
+| `parchment` | 羊皮纸 | `#7A4A22` / `#E3B873` |
+| `azure` | 晴蓝 | `#0E6FB4` / `#6FC1F0` |
+| `plum` | 暮紫 | `#6E3FA8` / `#C39AEE` |
+| `pine` | 松墨 | `#14705A` / `#6FD3B8` |
+| `contrast` | 高对比 | `#000000` / `#FFFFFF` |
+
+暗档强调色必须**变亮**：sk-10 量的是「按钮填充 vs 按钮上的反白文字」在每张皮肤两档都 ≥ 4.5:1。第一版 `ink` 暗档写的是 `#2F5FAE`，与反白文字只有 **2.96:1** —— 用例把它打回。这条规则写在 `lib/skins.js` 头注释里（只测 light 档看不见这个错，M6 就是专门验这只眼）。`tmp/contrast-report.mjs` 打全表读数：16 行（8 张 × 两档）里最低的一对是 `azure` light 的按钮反白 **5.06:1**，全表过 4.5:1 闸。
+
+标志 **6 枚自绘**（`lib/marks.js`：`letter` 方块 A / `ring` 圆环 / `diamond` 方解 / `hex` 六出 / `drop` 水滴 / `spark` 星芒）+ `off`（原样，一格都不注册）+ `image`（用户自己的图片）。每枚只用 `brand-primary` 与 `label-primary-inverted` 这一对色 —— 正是 sk-10 卡了 4.5:1 的那一对，所以皮肤换了标志跟着换色且始终读得清。
+
+**占哪几格**：`sidebar.brand.mark` + `conversation.hero.brand.mark`（跟**档位**走）+ `sidebar.brand.name`（跟那一格的**来源**走 —— 见下面三态）。三格都以 `BRAND_PRIORITY = -1` 注册，默认一格都不占。
+
+名称行那一格有**一个来源（三选一）+ 两种画法**（第六轮起两张脸、第七轮起由下拉显式选，见 §1 决策 22/24）：
+
+| 来源 `nameMode` | 这一格占不占 | 画什么 |
+|---|---|---|
+| `off`（官方字标） | **不占** | 官方那条自己回到渲染位 |
+| `text`（自定义文字） | 有字才占 | `<span class="ap-brandname">`；没字 → 不占 |
+| `image`（自定义图片） | 有图才占 | `<img class="ap-brandimg">`；**没图 → 降级**：有字画字、没字不占 |
+
+- 画**文字**时是本插件自绘 —— 宿主给这一格的契约是 `{children?: never}`（内容与宽度全归占位者），所以文字自己画、溢出自己收（单行 + ellipsis，不许把侧栏撑开），颜色读宿主令牌。它旁边还有宿主自己的元素，真实排版见 §5-U12；
+- 画**图片**时 `<img>` 的 `alt` 用文字顶上（读屏软件与加载失败时都不空着）—— 走的是同一条红线：**图片只走 `<img src>`，用户挑的文件绝不进 innerHTML**。
+
+哪张脸在生效由 `nameArt()` 说了算，判据是**来源**而不是"谁非空"：
+
+```
+来源 = image 且 有图地址  → 'image'
+来源 = off                → null（还给官方）
+其余                      → 有字 ? 'text' : null
+```
+
+"选了图片但还没选到图"因此会**降级**画文字（没文字就还给官方）——那一格空白会被宿主当成"没占位"，用户看到官方字标闪一下；同时面板里那句就地说明会点明"还没选图片"，所以降级是**可解释**的，不是瞒着用户。
+
+**两个去处的形状口径不同**（`SHAPE_OF`）：图标位 `crop:true`（裁成方形，那一格本来就是方的）、名称行 `crop:false`（**不裁方**，横长条 wordmark 裁成方等于毁图），框是 `512×160`（只缩不放大）。除此之外**解码 / 透明判定 / 质量阶梯 / 压不下去就降分辨率 / 压完反而更大就用原文件**这些兜底**全共用同一份实现** —— 分成两份迟早会漂（一处加了兜底另一处没有，用户会以为"名称行那张没处理好"）。ap-47 咬"共用且只差形状"这条。
+
+---
+
+## 5. 未决项（每条都写死「真机上怎么量」）
+
+| # | 悬着的问题 | 为什么离线测不出来 | 真机测法 | 失败时怎么办 |
+|---|---|---|---|---|
+| U1 | ✅ **结案（真机）**：负 `priority` 运行时接不接受 | 桩是按文档规则**写的**，它接不等于宿主接 | 挂载后读 `GET /api/state` 的 `lastReport.logo`：两格图标位是 `ok@-1` 还是 `throw@-1`；抛错原文照抄在状态卡上 | 实测全 `已占位（priority -1）`、logo 已换成自绘的 ⇒ 不需要退路。退路（不重试正数档位）仍写在 `client.js` 的 `syncBrand` 注释里。**注意**：第一轮占的是三格，第二轮按用户裁定撤了名称行，所以这条读数要重量的是**两格**（U1c） |
+| U2 | ✅ **结案（离线）**：插件侧自己存选择在技术上成立 —— 已接 `storageDomain`（决策 7）。剩"重启后真恢复得了"仍待真机 | 覆盖层是挂载时才叠的，重启时序不在离线用例手里；桩的 `open/put/get` 是照 §2 那份实测结论写的 | 挑「墨蓝 + 圆环」→ **重启 dsh**（不是 Ctrl+R）→ `GET /api/state` 看 `lastReport.skinId=ink`、`logo` 是 `builtin:ring …ok@-1`、`applied:24`；再截图核对界面 | 读不回来先分两种：`store.available=false`（宿主没给通道 ⇒ 界面已写「存不住」）还是 `GET /api/prefs` 非 ok（看状态卡那句原因）。两种都不该由猜来修：状态卡那行照抄的就是现场读数 |
+| U1c | 用户没点过的默认态：侧栏与首屏**确实是官方原 logo**、配色确实是内置的 | 桩里官方包是我手写的 `OfficialFill`，它被挤下去 ≠ 真机官方品牌包还在渲染位 | 挂新版本后什么都不点，进面板截图 + `GET /api/state`：`lastReport.logo` 应为 `原样`、`skinId` 为空、`applied:0` | 若默认态就已经不是官方 logo，说明 `runtime.brand` 初值或 `apply()` 里有人在没点的时候注册了 —— ap-5 的 `INITIAL` 那条只挡模块初值，挡不住装配期多调的一次 `syncBrand` |
+| U3 | `overrideTokens` 同 source 再调用是**原位替换**还是**挪到栈顶**；侧栏折叠态那格的 `size` 是多少 | 桩用 Map 语义（原位）；折叠 rail 的 size 只有真机渲染时才知道 | 叠完层后让另一个 source 盖同一令牌，看 `GET /api/state` 的抽查 `want/got`；把窗口收到最窄截侧栏，量 mark 的像素尺寸 | 原位替换 → 我们重新 apply 时可能被后叠的插件盖住，页面已有「没生效」读数可交代；size 异常就在组件里按 owner props 走（现在已经是 `size ?? 24`） |
+| U4 | 背景图 / 字体这类资源怎么送达浏览器 | 需要真页面：同源路由能否被 `<img src>` 引用、CSP 让不让 data URI | 第二期单独验：`GET /appearance/asset/<file>` 与内联 data URI 各试一次，看 console 有没有 CSP 违规 | 通道不成立就不做背景，只做纯色/渐变令牌 |
+| U5 | 桩不模拟「格子未声明就抛」；`sidebar.brand.name` 的 props 契约是否真只给 `{children?: never}` | 桩的 `register` 对任意名字都建格（`test/_stubs.mjs:105+`），真机对没声明的格子直接抛（`lib/index.js:165`） | 挂载后若品牌没换过来，先看状态卡有没有「is not declared」这类抛错 | 给桩补 declared 名单（照 §2 的五个名字），名单外的注册必须抛；顺带验组件没读越契约的 props |
+| U1b | 皮肤叠上去后**界面真读到**没有（24 个令牌 overrideTokens 收下 ≠ 渲染用上了） | 抽查读数原本只在界面上，`report` 通道坏时读不回来（U6）；现已把 `spots` 加进白名单第六字段 | 点「墨蓝」→ `GET /api/state` 看 `lastReport.spots` 是否 `bg-base:ok label-primary:ok brand-primary:ok`，`applied:24`；再切暗档看 `scheme:dark` | 若 `≠`：说明别的层盖在我们上面，或宿主按注册顺序折层时把内置主题排在后 —— 界面已如实显示「没生效」，届时改走 `register(ThemeDefinition)` 或调叠层时机，并回写本条 |
+| U7 | 折叠成最窄侧栏（rail）时那一格 `size` 是多少、我们的自绘标志在 20px 下糊不糊 | 只有真渲染知道 | 把侧栏拖到最窄截一张，量标志像素 | 按 owner props 的 `size` 走（组件已是 `size ?? 24`），必要时按 size 换笔划粗细 |
+| U8 | 用户挑的图片在真界面上加载得出来吗：`<img src="/appearance/api/logo?v=…">` 这条同源路由会不会被 CSP 的 `img-src` 挡住 | 离线桩不执行网络、不看 CSP；`data:` URI 那条路我压根没走（图片落库、由宿主路由送字节） | 挑一张 png → 截图看侧栏与首屏；console 里若出现 `Refused to load the image … because it violates … Content Security Policy` 就是这条 | 被挡就退回 `data:` URI 直接进 `src`（那时 §1 决策 13 的白名单与大小闸照旧，`nosniff` 那条变成"浏览器不会嗅探 data URL"，需重审）；不许改成 `innerHTML` 塞 SVG |
+| U9 | 第三、四轮那些界面修正（能滚 / 同行齐平 / 标志在前 / 卡片带预览 / 整卡可点 / 页头摘要）是**在宿主框架副本上**验的，副本搭对了不等于真机就是这个像素 | `tmp/dom-shot.mjs` 画的是照 §2 那几条 asar 实测规则手搭的 `.BynINW_frame` + `.BynINW_centerCol` 壳子（`W/H/TITLEBAR` 可用环境变量改），配色取 `host-token-values.json` 的内置实际值 —— 但它终究不是真宿主在渲染；而且它把组件树 `ser()` 成**静态 HTML**，props 上的事件处理器全被丢掉 ⇒ **离线出图通道验不了任何交互**（点击、悬停、方向键都不在它的能力范围内） | 真机 **重启 dsh** 后各截一张：默认态 light、选了「墨蓝 + 暗档 + 圆环」的整页、再把面板滚到底截一张。核对：① 有滚动条且底部 Disclosure 能滚进可视区；② 同一行卡片的脚注齐平；③ 卡片预览框的颜色和真机上生效后的配色对得上；④ 在配色区点一张皮肤，**面板不许跳回顶部** | 若真机仍不能滚：先量 `document.querySelector('.BynINW_centerCol')` 的实际高度与 `.ap-root` 的 `scrollHeight/clientHeight`，别再改 CSS 猜 —— 那说明宿主这一层的规则跟 §2 抽到的不是同一条（可能改版了），需要重抽 asar 并回写 §2 与 `tmp/dom-shot.mjs` 的壳子 |
+| U10 | 悬停态与焦点环**只有样式断言，没有任何像素/行为证据** | 出图通道产出的是静态 HTML（事件全丢），没法把鼠标"悬停上去"；而断言只能证明"规则写在样式串里、读的是宿主令牌"，证明不了它在真宿主里真的生效（比如被宿主的某条规则盖掉） | 真机重启后：① 鼠标划过一张未选中的配色卡与一枚标志方片，看边框与底色是否变；② 用 Tab 走一遍，看焦点环是否出现且不被裁 | 若真机没有悬停效果：先在控制台核对这两条规则有没有被更高权重的宿主规则压掉（本项目样式全是单类名，权重很低），必要时按宿主实际权重调整，并回写本节 |
+| U11 | 页头那行摘要里的数字（`24 处` / `2 格`）在真机上会不会与实际生效情况一致 | 离线件里 `appliedCount` 与 `brandRows` 都是桩算的，真机的 `overrideTokens` 返回值与 slot 注册结果才是真的 | 点一张皮肤 + 挑一枚标志，核对页头那行：`配色 X · N 处`、`标志 内置 · 圆环 · 2 格`；与 `GET /api/state` 的 `lastReport.applied` / `logo` 对不对得上 | 对不上说明读数与界面两处各算了一套（界面上报的是"想送多少"，真机回报的是"真落下去多少"）—— 那是同一个值有两个入口，按 §1 决策 6 的口径收口到 `runtime` 这一份 |
+| U12 | 名称行占上之后，**真侧栏里那一格长什么样**：宿主给那一格的字号/字重/行高是多少、我们的 `.ap-brandname` 跟它配不配、24 字的长名字会不会把折叠按钮或窗口控制挤掉 | 离线件里 `NameSlot` 是画在**我们的面板副本**里的，而真机上它挂在宿主的侧栏 DOM 上、旁边还有宿主自己的元素（`{children?: never}` 只说明"内容归占位者"，没说宽度和相邻元素怎么排）。出图通道产出的静态 HTML 里压根没有侧栏 | 重启后填一个 1 字的名字、再填一个 24 字的名字，各截一张侧栏（展开态 + 折叠 rail 态） | 若长名字把相邻元素挤歪：按宿主实际给的容器宽度收口（`max-width:100%` + ellipsis 已经在了，多半要往下调字号或按 rail 态换更短的表现）；别用 `position:absolute` 去躲 |
+| U13 | 名称行与两格图标位的**注册时序**：两个 `inject` 回调谁先到、各自的 disposer 互不影响吗（只填名字时图标必须仍是官方的） | 桩的 `inject` 是**立即回调**，真机是"声明出现时"回调 —— 三个格子可能不同时刻才 declared，而 `syncBrand` 是差集重算，行为依赖"每次声明到达都重算一次"这条 | 重启后只填名字、不换图标，看侧栏：**图标仍是官方、字变了**；再从界面点「原样」看两格是否都还给官方；最后卸载插件看两格是否都还原 | 若图标位被连带占上，说明差集的两类判断串了（`desiredBrandSlots` 里两个 `if` 各自独立，这一条专门盯它）；ap-36 是这条的离线替身 |
+| U14 | **名称行那张图**在真侧栏里长什么样（尺寸是否合适、会不会被宿主那一行的行高/`overflow` 裁掉），以及用户报的那行绿字在真机上**是不是真的会跟着状态消失** | 名称行那一格挂在**宿主的侧栏 DOM** 上，出图通道里压根没有侧栏（`NameSlot` 只在面板副本里画过）；而且我们给它是 `max-height` 还是自然高度，取决于宿主那一行怎么约束 —— 横向 wordmark（最高 160px）塞进一条侧栏行，很可能需要收窄。**陈旧提示那条同理**：`noteVisible` 是纯函数、离线断言已咬住（ap-48/M49），但"真机上切回星芒之后 DOM 里那行真的没了"仍然只有真机能证 | 真机**完全重启 dsh** 后：① 给名称行传一张横向 wordmark（比如 4:1），截图看侧栏那一行**图有没有被切、有没有把相邻元素挤歪**，再折叠成 rail 看一眼；② 传完图之后切回「星芒」，**同一屏**截图 + 读面板标志区看那句绿字还在不在 | ① 若图被裁：按宿主给那一行的实际高度收口（`max-height` + 等比缩放），必要时在 rail 态换更矮的表现；**不许**用 `position:absolute` 去躲；② 若绿字还在：说明真机上那条派生判据的输入与离线不一致（多半是 `runtime.brand.mode` 没回到 `off`）—— 先读 `GET /api/state` 的 `lastReport.logo` 确认档位，再回写本条 |
+| U15 | 面板里那个**来源下拉**在真机上的样子：`appearance:none` 之后宿主/系统会不会把它的内边距、高度或三角顶掉；**点开时那个系统菜单**在暗档下长什么样（那层菜单是系统画的，我们的令牌管不到） | 出图通道产出的是静态 HTML，**系统下拉菜单压根不存在**（离线只能看到收起来的样子，连"点开是什么样"都截不出来）；而 `appearance:none` 在 Chromium 里对 select 的支持是"基本可控"而非完全可控，某些平台上它仍会用系统控件的内边距 | 真机重启后面板截图：① 收起的下拉（对照设计稿：圆角、边框、右侧自绘小三角、文字色与旁边按钮一致）；② **点开**它截一张（看系统菜单的底色/文字在暗档下读不读得清） | ① 收起态被顶掉：先把 `padding`/`line-height` 写得更死一点（现在是 `padding:5px 26px 5px 10px`，与旁边 `.ap-name-b` 的 `5px 11px` 对齐），必要时退回不加 `appearance:none` 用系统外观；② 菜单在暗档下是白底黑字（系统行为）：**不改**，但记录下来 —— 那是宿主整体的一致性问题，不是本插件一处能修的（也不该为它注入全局样式） |
+
+---
+
+## 6. 验收
+
+**离线（现在就能跑，已跑）**
+```
+node test/run-all.mjs          # skins 12 / plugin 31 / client 55 = 98 过 0 挂
+node tmp/mutation-check.mjs    # 前置检查 + 67/67 变异被咬住，还原后 run-all 仍绿
+node tmp/mutation-points.mjs   # 改过 client.js 先跑这个：67 个变异点还唯不唯一
+node tmp/render-page.mjs [light|dark] [chosen|nameimg|namepending]   # 按出现顺序打印面板上每一句文案（改完用户可见文案先在这里核对）
+node tmp/contrast-report.mjs   # 8 张皮肤 × 两档的对比度读数（sk-10 那道闸的现场数字）
+node tmp/dom-shot.mjs [default|chosen|nameimg|namepending] [light|dark] [scroll]   # 离线出图 + 度量读数（W/H/NAME 可用环境变量改）
+W=560 H=1000 NAME=default-narrow node tmp/dom-shot.mjs default light   # 窄栏那份（根宽 538）
+node test/api-shape.mjs        # 真机 GET-only 复核（只读，不 POST）
+```
+最近一次读数（本轮实跑，第七轮）：`skins: 12 过 / 0 挂`、`plugin: 31 过 / 0 挂`、`client: 55 过 / 0 挂`、`变异电池：67/67 条咬住，干净套件 绿`、`run-all: 3/3 套件通过`。
+
+**像素读数（`tmp/dom-shot.mjs`，1440×912、标题栏按 Windows 那条 `padding-top` 复刻）**：
+```
+default/light  {"可视高":774,"内容高":1149,"要滚":true,"滚到底可达成":375,
+                "根盒模型":"border-box","根宽":1120,"根父内容盒":1418,"横向溢出":0,
+                "卡片_每行张数":[3,3,3],"同行卡片_底差":[],"脚注_y_分布":[583,802,1021],"脚注_每行张数":[3,3,3],
+                "标志方片":8,"配色卡":9,"页头摘要":"配色不覆盖（内置配色）明暗明亮标志原样（官方图标）","红字条":"(无)"}
+chosen/dark    {"可视高":774,"内容高":1224,"要滚":true,"滚到底可达成":450, …同上，卡片_每行张数 [3,3,3]、同行卡片_底差 []
+                "页头摘要":"配色墨蓝 · 24 处明暗暗黑标志内置 · 圆环 · 3 格 · 名称已换"}
+default/narrow（W=560）  {"根宽":538,"根父内容盒":538,"横向溢出":0,"卡片_每行张数":[1,1,1,1,1,1,1,1,1]}
+nameimg/light   {"可视高":774,"内容高":1250,"要滚":true,"滚到底可达成":476,"根宽":1120,"横向溢出":0,
+                "同行卡片_底差":[],"名称行入口":["name-apply","name-reset","name-image","name-image-clear"],
+                "名称行缩略图":"有","名称行提示":"这一格现在画的是上面那张图（图片优先于文字）；点「清掉图片」就回到你填的文字。",
+                "页头摘要":"配色墨蓝 · 24 处明暗明亮标志内置 · 圆环 · 3 格 · 名称行图片"}
+nameimg/narrow（W=560）  {"根宽":538,"根父内容盒":538,"横向溢出":0,"卡片_每行张数":[1,1,1,1,1,1,1,1,1],"名称行缩略图":"有"}
+```
+第七轮（来源下拉）四档跑齐，读数里 **`名称行来源` + `名称行入口`** 这两项就是"下拉停在哪一项、此刻渲染出来的是哪几个入口"的机器可读证据：
+```
+default/light      {"内容高":1175,"名称行来源":"off","名称行入口":["name-src"],"名称行缩略图":"无",
+                    "名称行提示":"这一格用 dsh 自带的字标；想换就选「自定义文字」或「自定义图片」。"}
+chosen/light       {"内容高":1250,"名称行来源":"text","名称行入口":["name-src","name-apply"],"名称行缩略图":"无",
+                    "名称行提示":"这一格画的是你填的字；清空就等于还给官方字标。"}
+nameimg/light      {"内容高":1250,"名称行来源":"image","名称行入口":["name-src","name-image","name-image-clear"],"名称行缩略图":"有",
+                    "名称行提示":"这一格画的是上面那张图；点「清掉图片」回到你填的文字「我的工作台」。"}
+namepending/light  {"内容高":1250,"名称行来源":"image","名称行入口":["name-src","name-image"],"名称行缩略图":"无",
+                    "名称行提示":"还没选图片 —— 这一格现在画的是你填的文字「我的工作台」，选一张图就换上。"}
+nameimg/narrow(W=560) 同上四项读数一字不差，根宽 538 == 根父内容盒、横向溢出 0
+```
+怎么读这组读数：`名称行入口` 里**编号靠后的那一对是互斥的** —— `name-apply` 只在来源 = 文字时出现，`name-image` / `name-image-clear` 只在来源 = 图片时出现，`name-src`（下拉自己）**永远在**。所以"一次只出现一组操作"这件事不用看图就能判。`namepending` 那行是最值得记的：来源已经是 `image`、入口只有 `name-src`+`name-image`（**没有** `name-image-clear`，因为还没图），而提示老老实实说"还没选图片 …… 现在画的是你填的文字「我的工作台」" —— 这正是决策 24 里那条降级口径的现场读数。内容高在 `default`（1175）与其余三档（1250）之间差 **75px**：多出来的就是"输入框 + 用这个"或"缩略图 + 换一张图 + 清掉图片"那一组控件，与前几轮一样，读数里看得见。
+第六轮新增的 `nameimg` 那两行是**名称行画图**那一屏的读数：`名称行入口` 四个（文字那组的 `name-apply`/`name-reset` + 图片那组的 `name-image`/`name-image-clear`）—— 这一项就是"两组入口都在、且各自带 `data-ap-id`"的机器可读证据；`名称行缩略图:"有"` 与那句 `名称行提示` 则是"图片优先"这条口径在 DOM 里真的成立了。内容高从 `chosen` 的 1224 长到 **1250**，多出来的 **26px** 就是就地说明那一行 + 缩略图把按钮撑高的那点量（不是"大概差不多"，读数里看得见）。窄栏那份四个入口一个不少、`横向溢出 0` ⇒ 名称行那两组在 538px 下自己换了行、没被拆成两半、也没把面板顶宽。
+怎么读这几行：`可视高 774 < 内容高 1149` 且 `要滚:true` —— 用户报的"滚不动"在副本上不成立；`滚到底可达成 375` 是还能滚出来的量，配 `chosen-dark-scrolled.png` 里 Disclosure 整段进可视区。**第五轮把内容高从 1107 推到 1149，多出来的 42px 就是名称行那一行的实测量**（`chosen` 那屏 1182→1224 同理）—— 新增控件占了多高，读数里是看得见的，不是"大概差不多"。`同行卡片_底差: []` 表示**每一网格行内卡片底边完全齐平**（按 top 归组比 bottom 极差，>1 才报），`脚注_y_分布` 每行一个值 ⇒ 同一行卡片的脚注 y 完全相同，这是"一个高一个低"的结案读数。`横向溢出: 0` + `根宽 1120 ≤ 根父内容盒 1418` ⇒ 根容器是 `border-box` 且没顶出父容器（§46 那次"右侧被裁 40px"就是这条不成立）。窄栏那份 `根宽 538 == 根父内容盒 538`、`横向溢出 0`、卡片塌成一列 —— 窄面板不崩。
+
+界面截图本轮也**人眼核过**（`tmp/shots/`：`default-light.png`、`default-dark.png`、`chosen-light.png`、`chosen-dark.png`、`chosen-dark-scrolled.png`、`default-narrow.png`、**`nameimg-light.png`、`nameimg-narrow.png`、`namepending-light.png`、`namepending-narrow.png`、`nameimg-dark.png`**）：无黑块、标志区在配色区之前、八张皮肤卡片的预览框颜色互不相同且跟着明暗档变、选中卡片有描边与角标、页头摘要与所选一致、暗档下文字可读；第五轮再看两处 —— 名称行那一行（宽栏与窄栏各自成行、两个动作按钮**看得出是按钮**而不是一串灰字）、以及 `chosen` 那屏里输入框显示的就是填进去的名字；**第六轮看 `nameimg` 那两屏** —— 名称行文字那组（输入框里仍是「我的工作台」，证明图片上来之后**文字没被删**）、图片那组（缩略图在位、「换一张图」上点着选中态、右边多一个「清掉图片」）、以及那句就地说明；窄栏那屏重点看**两组各自换行**（文字组一行、图片组一行）而不是被拆成两半；**第七轮再看四档**：`default` 那屏下拉是「官方字标」且右边**一个控件都没有**、`chosen` 是「自定义文字」+ 输入框 +「用这个」、`nameimg` 是「自定义图片」+ 缩略图 +「换一张图」+「清掉图片」、`namepending` 是「自定义图片」+ 只有「选图片」+ 那句"还没选图片"；窄栏那屏看下拉与它后面那组控件**同一行装得下**（538px 下没被挤成两行）。**注意这是宿主框架副本上的像素（§5-U9），不等于真机像素；悬停/焦点两态连副本都验不到（§5-U10）；名称行那一格画在宿主的侧栏上，副本里根本没有侧栏，那一格的真机样子属于 §5-U12（文字）与 §5-U14（图片）。**
+
+本轮抓到并修掉的四类「假绿」：异步用例没 await（10 处 hs + 1 处 ap）、桩当场调用了协程 yield 出的 disposer（把刚注册的 brand 又撤了）、`walk()` 在 button 上自递归（爆栈掩盖断言）、**离线用例直接喂 body，掩盖了真机 handler 只有 `(req, res)` 两个参数**（hs-11 补的那条形状）。第二轮又添三类同一形状的空断言：**ap-19 扫页面时状态卡是空的**（没套层 ⇒ 抽查那几行根本不渲染，所以「不许印令牌名」当时是摆设 —— M11 当场存活），**resetRuntime 自己把默认值写死了一遍**（所以「默认档位改成 builtin」的 M12 也活下来，改成对模块初值 `INITIAL` 断言才咬住），**走查脚本 `tmp/render-page.mjs` 的载荷没跟着 `index.js` 加 `marks`**（六枚标志卡片在走查里整块消失，真机却正常 —— 走查通道自己漂了）。第三轮再添两类：
+- **`findByClass` 不展开函数组件** —— 新加的 ap-28/29/30 头一回跑时"找到的节点数是 0"，而断言写成"找不到就不检查"，于是三条全是空断言。改成展开（`typeof node.type === 'function'` 就递归它的返回）以后才真有内容。教训：新断言第一次跑必须**当场证明它能看见节点**（本轮是靠"计数从 0 变成 17/8/9"证的）。
+- **`max-height:100vh` 这条写法本身**是从股票插件抄来的，而它在 Windows 上必然顶出尾巴 —— 离线断言当时只验"有没有滚动规则"，验不出高度算错了。修法是把真机事实（frame 有 `padding-top`）先抽出来再定规则，并把 ap-28 反过来**禁止** `100vh`（M23 那条变异就是删 `overflow-y:auto`）。
+
+第四轮抓到的两条，形状与上面都不同，记在 §5 之前那段末尾（**变异本身是 no-op** 与 **管道 EBUSY 让电池变成一片假红**）—— 前者提醒"电池报存活时先怀疑变异没改到行为"，后者直接把电池的前置检查补上了。
+
+第五轮又抓到**同一族的第三条，也是这一族里最阴的**：新加的 4 条异步断言忘了 `await`，**一条都没跑，套件仍报全绿**（`checkA` 是 async，不 await 就在后台跑，而 `process.exit` 抢在它们之前执行）。现场证据不是任何一条红字，而是**总数从 36 变成了 38 而不是 42** —— "全绿"是绝不会告诉你它少跑了几条的。
+
+这一族在 `test/client.test.mjs` 这一个文件里已经犯过**三次**（同步 check 拿到 promise、桩当场调用 disposer、这次的漏 await），所以这次不再靠"下次注意"：**把 `checkA` 改成登记制** —— 调用时只把 `{name, fn}` 推进队列，文件末尾 `await runAsyncCases()` 按登记顺序串行跑。于是：① 漏写 `await` 也照样跑到、照样计入总数；② 多条异步用例顺序执行，不会并发去抢 `globalThis` 上的桩（canvas / FileReader / fetch）互相污染。验证方式是"把 5 处 `await` 全删掉，跑出来仍是 42 过 / 0 挂"。规矩写在这里：**新增异步断言之后先数总数，再谈绿不绿。**
+
+67 条变异（括号里是电池报出的第一条红用例）：M1 brand 档位 -1→0（ap-2，共 7 条红）、M2 缺档不再拦（ap-8）、M3 未知 id 回落默认（ap-9）、M4 抽查只比"送没送到"（ap-17）、M5 没路由也推入口（hs-3）、M6 暗档强调色改回写死深蓝（sk-10）、M7 界面文案数字不跟着皮肤表改（ap-18）、M8 又假设宿主会传第三个参数 body（hs-7，共 6 条红）、M9 开发期回读卡长回用户界面（ap-18，共 2 条红）、M10 页头把开发期自述还给用户看（ap-19）、M11 抽查那三行改回印令牌名（ap-19）、M12 默认档位长成"内置标志"（ap-5）、M13 迟到的存档盖掉用户刚点的（ap-23）、M14 拒层后把还在生效的旧层记成未应用（ap-9）、M15 预览不传自己那枚 id（ap-21）、M16 存档写失败只吞不回（ap-22）、M17 宿主收图信调用方声明的 mime（hs-18）、M18 图片响应去掉 nosniff（hs-17）、M19 存档不验皮肤 id（hs-15）、M20 存档不验标志档位（hs-16）、M21 挑回原样不撤销注册（ap-5，共 2 条红）、M22 builtAt 每次 GET 现取（hs-24）、M23 去掉 `.ap-root` 的 `overflow-y:auto`（ap-28，共 2 条红）、M24 去掉 `.ap-skin-foot` 的 `margin-top:auto`（ap-28）、M25 把"标志"那节标题写成"配色"（ap-29）、M26 标志容器类名写错 ⇒ 顺序断言成空断言（ap-29）、M27 预览块改成一律读宿主令牌 ⇒ 八张卡片长得一样（ap-30）、M28 配色脚注换类名 ⇒ 不再钉底（ap-28）、M29 预览固定按亮档画（ap-30）、**M30 根容器挂回 `key`（ap-33）、M31 悬停态整条撤掉（ap-31）、M32 配色卡退回不可点的 div（ap-28）、M33 页头摘要不跟着选择走（ap-32）、M34 撤掉单选项的键盘处理（ap-34）、M35 选中态描边不跟皮肤走（ap-31）、M36 单选组里允许全部同时选中（ap-35）、M37 存档坏消息不落在页头（ap-32）、M38 名称行填了字也不占那一格（ap-36）、M39 换一次图标就把名称行的文字抹掉（ap-36）、M40 裁切不居中（ap-37，共 2 条红）、M41 有透明也走 JPEG（ap-38）、M42 质量阶梯只剩最高那一档（ap-38）、M43 原图上限撤掉（ap-41）、M44 SVG 也被位图化（ap-40）、M45 名称行那格不再等声明（ap-16，共 2 条红）、M46 宿主不校验名称字数（hs-16b）、M47 换标志时不再重新占位（ap-42，共 3 条红 —— 复现用户报的"点第二枚不生效"）、M48 格式清单手写一遍不从白名单派生（ap-44）。**第六轮新增 10 条**：**M49 那句处理结果不跟着状态走（ap-48 —— 复现用户报的"切回别的图标它还挂着"）、M50 名称行改成"文字优先"（ap-45）、M51「还原官方」只清文字不清图片（ap-49）、M52 名称行指纹漏掉图片地址（ap-46）、M53 宿主对不认识的 `?which` 静默回落成 mark（hs-26）、M54 写名称行那张图时不再顺手点开关（hs-25）、M55 存档写入又把 `mode` 当必填（hs-25，共 2 条红）、M56 名称行那张图也裁成方形（ap-47）、M57 落点写死成图标位（hs-25）、M58 某格还没读到就按当前值写回去（ap-50）**。**第七轮新增 6 条**：**M59 指标重建 `runtime.brand` 时漏接 `nameMode`（ap-52 —— 复现"点一枚标志，下拉就跳回官方字标"）、M60 `nameImage` 又按"地址在不在"判（ap-45b）、M61 清图后来源没退回（ap-49）、M62 不认识的来源静默当 `off`（ap-45）、M63 选了图片但还没选到图时那一格留空（ap-45b）、M64 `noteVisible` 改回看地址、不看来源（ap-48）、M65 选「自定义图片」这个来源时顺手把文件框弹出来（ap-53 —— 用户 2026-10-04 报的“应该是点击选图片才弹”）、M66 配色区把「不覆盖」挪回最后（ap-30 —— 用户 2026-10-04 报的“默认放第一个”）、M67 宿主声明的 `skinChoices()` 顺序与界面画的不一致（sk-6）**。
+
+**这一轮电池还顺手修了三条跟着源码漂掉的旧变异点**（`tmp/mutation-points.mjs` 报"找不到"，不是"存活"）：M12（`brand` 初值多了 `nameImageUrl`）、M38（判据从 `runtime.brand.name` 换成了 `nameArt()`，顺带把文案改成"文字或图片"）、M41（`hasAlpha` 的签名从写死的 `side` 改成 `w, h`，为的是名称行那张横长条也能测透明）。这三条提醒一件事：**改源码之后先跑 `mutation-points`，别直接跑电池** —— 变异点找不到时电池报的是 `BROKEN`，和"断言没咬住"是两码事，混在一起看会把工作区的真实状态读错。**第七轮同一件事又重演四次**（这是第二、三、四次）：M12（`brand` 初值这轮又多了 `nameMode`）、M49（`noteVisible` 名称行那半句改成问 `nameArt()`）、M50（判据从 `if (nameImageUrl)` 换成 `if (nameMode === NAME_SRC_IMAGE && nameImageUrl)`）、M58（`brand.nameImage` 的判据换成了来源投影）。四次都是同一个动作 —— **改完源码先跑 `mutation-points`，现在是硬流程，不是建议**。
+M4 是电池最早当场暴露的漏洞：加 ap-17 之前，把 `ok: !!want && want === got` 改成 `ok: !!want` 时**全套件仍全绿** —— 也就是"抽查"曾经是个摆设。M32 是第四轮的反面教材：第一版写成 `h('button', { type: 'div' })`（改的是 props 不是元素类型），电池报"存活" —— 那说明变异没改到行为，不是断言松。
+
+**真机（插件已由用户自己在 desktop 里装上，不再需要备份+diff 那一步）**
+1. **改 `client.js` 一律按"完全退出 dsh 再启动"办**。`Ctrl+R` 够不够这个插件没测过，而同族的 `dsh-data-analysis` 记的是宿主进程缓存 client bundle、"重试本页面同步"不吃新样式；而且回报字段里没有版本标志，**读 `GET /api/state` 也证明不了页面吃没吃新 bundle**（见上面那段）。所以第三~六轮的界面改动至今是离线像素（§5-U9）。宿主半边（`index.js`/`lib/*`）本来就要重启。
+2. 面板界面必须截图核对（不看代码看像素）；
+3. **只用 GET** 复核：`/appearance/api/state`（含 `lastReport`）；**存档这条也一样 —— 真机上一律不 POST，写选择只从界面点**（血案见 §1 决策 6 与项目记忆「真机探针只允许 GET」）；
+4. headless Chrome 截图走查（通道见 `dsh-plugin-sysops` 的约定文档）：**默认态（什么都不点）**侧栏 + 面板 light / 选了「墨蓝 + 暗档」侧栏 + 面板 dark / **面板滚到底那一张** / **在配色区点一张皮肤，核对面板没有跳回顶部** / 鼠标划过一张未选中的卡片看悬停态 / Tab 走一遍看焦点环 / 折叠成 rail / 会话首屏 / 选了本地图片那档 / **只填名称行、不换图标的那一屏**（侧栏图标必须仍是官方的、只有字变了）/ **名称行填 1 个字与填满 24 个字各一张侧栏**（展开态 + 折叠 rail 态，看长名字会不会挤到相邻元素）/ **传一张 >200KB 的长方形图**（看方片下面那句"已裁成方形 · 从 X 压到 Y"、以及预览里图有没有被切歪）/ **传完图标位那张图之后切回「星芒」**（那行绿字必须消失 —— 用户 2026-10-04 报的那条）/ **名称行传一张横向 wordmark**（看侧栏那一格图有没有被切、有没有挤歪相邻元素，再折叠成 rail 看一张；连同「换一张图」/「清掉图片」/那句"图片优先"的就地说明一起核），各一张；
+5. 截图必须人眼核对**没有黑块**（这条是用户定下的规矩，不看截图不许报完成）。
+
+---
+
+## 7. 红线对照（与 sysops 同一套）
+
+- 宿主半边零 `@deepseek-ai/*` import（hs-1 咬）、除 `./` `../` `node:` 之外零外部裸包名（hs-1b 咬）：`link:` 挂载下会解析出第二份模块实例。
+- 零第三方依赖：皮肤与标志是纯数据，schema 自造（`lib/schema.js`），对比度在测试里手算。
+- 不弹浮层、不静默改宿主文件、不注入全局 CSS：样式只有 `.ap-` 前缀那几条，ap-13 逐条咬；界面颜色全读 `var(--dsw-alias-*)`，ap-14 咬写死色值。**唯一例外是 `SkinSwatch` 预览框**（§1 决策 17）：它的任务就是把"这张皮肤自己的颜色"画给用户看，所以内联的是皮肤表里的字面色值；ap-30 把它钉成"必须等于皮肤表 + 8 张互不相同 + 跟明暗档走"，M27/M29 是那两头的变异。除此之外不许再开第二个口子，也不许在这个框里写宿主当前生效的色（那等于没有预览）。
+- **操作的反馈只许落在操作对象自己身上**（用户红线：任何页面都不许用顶部浮层提示条）。本插件的三个落点：① 被点的卡片/方片自己的选中态；② 页头那行摘要（点了什么、成了没有）；③ 页头下的红字条（存档写失败、配色没生效、标志没换上）。ap-31 反向禁止 `position:fixed`，ap-32 钉"坏消息必须落在 `.ap-head` 块里"（M37 是它的变异）。
+- **一个选择只有一个入口**：配色卡与标志方片都是 `button[role=radio]`，**卡里不许再嵌按钮**（ap-28 计数咬），整页只有一个配色组、一个标志组，且任何时刻组里恰好一项 `aria-checked="true"`（ap-35 咬）。这是"我点的到底是哪个"这类问题的结构化解法。
+- **根容器不许挂 `key`**：`.ap-root` 同时是滚动容器，挂 key 会让每次点击把整棵子树连 DOM 一起重挂、滚动位置归零（表现是"点一张皮肤面板弹回顶部"，静态截图完全看不出来）。ap-33 同时钉住"它就是滚动容器"，M30 是它的变异。
+- **根容器不许用容器查询**：`container-type` 会施加 inline 轴 size containment，在宿主那种"宽度由内容决定"的父级下算成 0 宽，整页塌成一列竖线（真机炸过）。断点一律 `@media`；ap-31 咬这条。
+- **三态必须齐**：`:hover`（换底色）、`:focus-visible`（画焦点环）、`.ap-on`（选中态跟 `brand-primary` 走）—— 上一版通篇零 `:hover`，这是用户说"页面交互不行"里最直接的一条。ap-31 咬，M31/M35 是它的两个变异。注意这两态只有**样式断言**，没有像素证据（§5-U10）。
+- **界面尺寸跟着宿主骨架事实走，不靠猜**：滚动、卡片等高这类布局判据，先按 §2 那三条从运行中 asar 抽出来的规则（`centerCol` 是 `overflow:hidden`、`frame` 带 `padding-top` 所以 `100vh` 一定超、官方入口页用 `height:100% + overflow:auto`）定下来，再拿 `tmp/dom-shot.mjs` 的读数复核；写死的 `100vh`/`max-height` 一律算违规（ap-28 反向钉）。
+- **不写宿主的任何目录**：用户图片落在插件自己的 storageDomain（`~/.dsh/storages/appearance_prefs.json`）里，不是 `resources/` 下的文件；`GET /api/logo` 只回这张图，路径不接受调用方给的名称。
+- **用户图片永不进 HTML**：只走 `<img src>`（ap-24 咬"节点没有 children/innerHTML"）—— SVG 内嵌脚本在 `img` 里不执行；响应带 `nosniff`（hs-17）。**这条对三处一律成立**：图标位那格、名称行那格（`.ap-brandimg`，`alt` 用文字顶上）、面板里那个缩略图（`.ap-name-thumb`）。
+- 诚实降级：没 webServer ⇒ 入口都不注册（hs-3）；theme 缺席 ⇒ 配色按钮全禁用 + 写明「未就绪」（ap-12）；存储通道缺席 ⇒ 存档不接、界面写「这台机器上存不住」（hs-6/ap-22）；皮肤缺档 ⇒ 整层不应用并把令牌名点名（ap-8）；未知 id ⇒ 不回落默认值冒充（ap-9）；被别的层盖住 ⇒ 报「没生效」（ap-17）；宿主没声明那两格 ⇒ 选择照存、界面写「还没占上位」（ap-27）；界面上只留跟使用有关的文案（ap-19 + M10/M11/M15）。
+- **默认什么都不改**：进来不套配色层（ap-7）、不占标志格（ap-5），一切由用户点出来；撤销必须能回到官方原样（ap-26、M21）。
+- **跨边界的组件：状态变了必须让宿主重新注册**。宿主只在「注册表发生变化」时重画，而我们注册的组件读的是模块级 `runtime` —— 光改自己这边的状态，宿主不知道。所以 `syncBrand` 按**指纹 `sig`** 决定重挂：指纹变了就撤掉重占，没变就一动不动。**"重挂是浪费"是错的判断**（2026-10-04 就是这么把"点第二枚标志"改坏的）。ap-42 咬"该重挂的必须重挂"，ap-43 咬"不该重挂的不许动"，M47 是变异。
+- **界面上的清单类文案必须从常量派生，不许手写第二遍**：那句"支持的图片：PNG / JPEG / WebP / SVG"是 `LOGO_ALLOWED_MIMES` 映射出来的（`LOGO_MIME_LABELS`），白名单动了文案自己跟着走。ap-44 咬同源关系，M48 是变异。
+- **名称行与两格图标位各自独立，不许联动**：图标看档位（`mode !== off`）、名称行看那一格**有没有内容**（文字或图片都算），两个 `if` 分开写在 `desiredBrandSlots()` 里。换图标不许顺手改名字，改名字不许顺手换图标，挑回原样只撤图标位。ap-36 咬这三条，M38/M39 是两个方向的变异。
+- **名称行那一格的「图片 / 文字」是"图片优先、文字留着"**（用户 2026-10-04 选定）：两个都有时画图，但 `runtime.brand.name` **一个字节都不删** —— 清掉图片就该回到用户原来那段字，而不是回到空白。「还原官方」必须**两头都清**（只清文字的话那一格还在画图 ⇒ 用户按了没反应）；「清掉图片」必须**只清图片**（顺手把文字也清了就等于把用户的东西删了）。ap-45/ap-49 咬这两头，M50/M51 是变异。**"现在用不用图"只有 `prefs.brandNameImage` 那个 0/1 开关说了算**，不看 `logo` 表里有没有 `name` 那行（否则「清掉图片」重启后会失效）；写 `name` 那张图时**顺手点开关这一步在宿主路由里**，不许拆成两次请求（拆开就会出现"图在库里、界面不认"，hs-25/hs-28 当场红，M54 是变异）。
+- **名称行那一格由用户选的「来源」决定画什么**（下拉三项：官方字标 / 自定义文字 / 自定义图片），**不是"谁非空就画谁"** —— 反推的写法表达不出"选了图片但还没选到图"这种中间态，用户一选就被弹回上一项（决策 24）。切来源**不许毁数据**：切到文字/图片时另一份内容一个字节不碰，只有「官方字标」与「清掉图片」真清；落盘把来源**投影成 `prefs.brandNameImage` 这一个 0/1**（`image` ⇒ true），所以**存档格式一个字没改、旧档照读**。ap-45/ap-45b/ap-52 咬这三条，M50/M60/M61/M62 是变异。**降级口径也钉在这**：`nameMode='image'` 但还没选到图 ⇒ 有字画字、没字还给官方（**不留空白** —— 那一格空着会被宿主当成"没占位"），ap-45b 咬、M63 是变异。**"选来源"与"选文件"是两件事**：把那一格切到"自定义图片"这个来源，**不许顺手把文件框弹出来** —— 弹不弹只由用户点「选图片」那一下决定（用户 2026-10-04 报的"应该是点击选图片才弹"）；ap-53 咬、M65 是变异。
+- **两个去处的图片共用一条编码链**：解码 / 透明判定 / 质量阶梯 / 压不下去就降分辨率 / 压完反而更大就用原文件**都只有一份实现**，两格之间**只差"裁不裁、框多大"**（`SHAPE_OF`：图标位裁方，名称行不裁方 + 512×160）。分两份写迟早会漂，而漂了之后的表现是"名称行那张没处理好"这种最难定位的说法。ap-47 咬"共用且只差形状"，M56 是变异。
+- **那句"自动处理成什么样了"必须从状态派生，不许在每个动作里手动清**：`noteVisible(note, target)` 只读 `runtime`，判据是"那一格现在画的**就是**这张处理出来的图"（`mark` 看 `mode === image`、`name` 看名称行真的挂着图）。旧写法（在 `chooseMark`/`resetName`/清图片里各记得清一次）**一定会漏**，用户 2026-10-04 报的那条就是漏出来的。ap-48 咬四条路径（含第七轮补的"图还在库里、只是来源切到了文字 ⇒ 那句必须消失、地址不许被删"），M49/M64 是变异。**判据问的是 `nameArt()`（来源说了算），不是"地址还在不在"** —— M64 就是把判据改回看地址而活下来的那条。
+- **自动处理必须说出来，而且不许因此放宽宿主的闸**：裁方了、压了多少，就地写在方片下面（ap-38 咬 note 里同时有"已裁成方形"和"压到"）。"我们能压"不等于"宿主该收更大的图" —— 宿主那道 200KB + 类型白名单一个字没改（决策 20），压缩只是让合规的图更容易进来。
+- 桩不许比宿主能多也不许比宿主少：四份桩逐条注了出处，报错文案照抄宿主英文原文（§2）。**测试框架本身也在红线内**：异步用例一律登记制（`checkA` → 末尾 `runAsyncCases()` 串行跑），不许回到"调用即启动 + 靠人记得 await"那种写法（§6 假绿清单第五条）。

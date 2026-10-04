@@ -1,0 +1,15 @@
+# dsh-plugin-appearance —— bundle patch
+# 顶层是 patch 条目数组：把本插件插进 profile 的插件树。
+#
+# 挂载方式（等用户确认后才做）：profile 的 package.json 里加
+#   "dependencies": { "dsh-plugin-appearance": "link:F:/dsh-plugins/dsh-plugin-appearance" }
+#   "dsh.profile.bundles": [..., "dsh-plugin-appearance"]
+# 装完要重启 dsh 才生效（宿主半边变了）。
+#
+# 停用而不卸载：在 profile 的 cordis.patch.yml 里按 id 覆盖
+#   - id: appearance
+#     disabled: true
+
+- insert:
+    - id: appearance
+      name: dsh-plugin-appearance
