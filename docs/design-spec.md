@@ -385,6 +385,8 @@ tmp/asar-find.mjs / tmp/asar-css.mjs / tmp/extract-token-values.mjs 对运行中
 
 ## 6. 验收
 
+> **这份规格里出现的 `tmp/*.mjs` 都不在仓库里**（变异电池、离线出图、文案打印、对比度读数、asar 取证，连同它们的产物）。`tmp/` 是作者本机的临时目录，`.gitignore` 挡着它，公开仓库里只有 `test/` 那 98 条用例带得走机器断言。所以下面这些读数是**照抄的现场记录**，不是在这份仓库里能复跑的东西 —— 要复核结论，先读 `test/`，再决定要不要照 §2 的判据自己重建工具。
+
 **离线（现在就能跑，已跑）**
 ```
 node test/run-all.mjs          # skins 12 / plugin 31 / client 55 = 98 过 0 挂
