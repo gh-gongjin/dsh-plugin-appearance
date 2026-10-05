@@ -9,6 +9,9 @@
  * 全程只 GET：不改宿主状态、不 POST（真机探针铁律 —— 曾经有探针漏了 `.data` 信封把 prefs 整行覆盖成空）。
  * 代价：本脚本自己不发 report，所以它读到的仍是上一次落下来的那条；
  * 想看新的就回界面点一下（那是用户操作，不是脚本操作）。
+ * 那条回报属于哪一次会话，脚本**现算**：拿 `lastReport.at` 跟宿主 `builtAt` 比大小
+ * （同为 epoch 毫秒）—— 比它晚就是本次会话产生的，比它早就是更早的会话留下的。
+ * 这里**不许写死"上一轮"**：没点过皮肤时只可能是更早的会话，点过之后就不一样了。
  */
 import assert from 'node:assert/strict';
 import { SKINS, SKIN_NONE_ID } from '../lib/skins.js';
@@ -35,7 +38,7 @@ console.log('皮肤:', d.skins?.map((s) => `${s.id}:${s.tokenCount}`).join(' '))
 console.log('标志:', d.marks?.map((m) => m.id).join(' '));
 console.log('默认:', `skinId=${d.defaultSkinId} brandMode=${d.defaultBrandMode}`, '存档:', JSON.stringify(d.store));
 console.log('lastReport:', JSON.stringify(d.lastReport ?? null));
-console.log('builtAt:', d.builtAt, '（宿主半边进程起来的时刻；lastReport.at 比它早 ⇒ 那条是上一轮会话留下的）');
+console.log('builtAt:', d.builtAt, '（宿主半边进程起来的时刻）');
 
 // 载荷通道本身：这一条与 lastReport 无关，先钉住"挂上去的是现在这一份"。
 assert.deepEqual(d.skins.map((s) => s.id), SKINS.map((s) => s.id), '皮肤表形状不对（挂的还是旧的一份？）');
@@ -51,7 +54,16 @@ if (!rep) {
 } else {
   assert.deepEqual(Object.keys(rep).sort(), ['applied', 'at', 'error', 'logo', 'scheme', 'skinId', 'spots'],
     `回报字段对不上白名单：${Object.keys(rep).join(', ')}`);
+  // 这条回报是**哪一次会话**产生的，必须现算，不许写死成"上一轮"：
+  // 用户没点过皮肤时任何回报都只能来自更早的会话；点过之后本次会话就会落一条新的。
+  // （判据：at 与 builtAt 同为 epoch 毫秒，直接比大小。）
+  const newerThanBoot = typeof rep.at === 'number' && typeof d.builtAt === 'number' && rep.at > d.builtAt;
+  const when = newerThanBoot
+    ? '本次宿主会话'
+    : '更早的会话（宿主这次起来之后还没产生过新回报）';
+  console.log(`回报时刻：lastReport.at=${rep.at} vs builtAt=${d.builtAt} ⇒ 这条来自 **${when}**`
+    + (newerThanBoot ? `（晚 ${rep.at - d.builtAt}ms）` : ''));
   console.log('结论：' + (rep.spots && rep.skinId
-    ? `上一轮回报是 skinId=${rep.skinId} applied=${rep.applied} scheme=${rep.scheme} logo=${rep.logo}｜spots=${rep.spots}`
+    ? `${when}的回报是 skinId=${rep.skinId} applied=${rep.applied} scheme=${rep.scheme} logo=${rep.logo}｜spots=${rep.spots}`
     : '回报通道通，但那条是默认档（未点过）：' + JSON.stringify(rep)));
 }
