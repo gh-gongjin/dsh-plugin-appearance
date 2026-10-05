@@ -1509,6 +1509,214 @@ check('ap-53 选「来源」本身不弹文件框：弹不弹只由用户点「�
   resetRuntime();
 });
 
+/* ============================================================
+ * 体验优化第 1 批（2026-10-05）：对比度读数 / 页头 aria-live / 一键还原 / 拖拽 + 粘贴
+ * ============================================================ */
+
+/**
+ * WCAG 对比度的**独立口径**（与 test/skins.test.mjs 的 `contrast` 同一公式）。
+ * 用例自己算一遍再去核实现 —— 生产侧只有 `client.js` 的 `contrastRatio` 这一份，
+ * 这里是第二只眼睛，不是第二份实现。
+ */
+const wcagLum = (hex) => {
+  const [r, g, b] = [1, 3, 5].map((i) => {
+    const v = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+const wcag = (a, b) => {
+  const [x, y] = [wcagLum(a), wcagLum(b)].sort((m, n) => n - m);
+  return (x + 0.05) / (y + 0.05);
+};
+
+check('ap-54 配色卡把"正文读起来清不清楚"算出来（WCAG 对比度），不是只摆一排好看的色块', () => {
+  // ① 实现本身：两个端点、一个公认边界、三种"读不出来"的输入。
+  assert.equal(T.contrastRatio('#000000', '#ffffff').toFixed(2), '21.00', '黑白对比度不是 21 —— 公式错了');
+  assert.equal(T.contrastRatio('#767676', '#ffffff').toFixed(2), '4.54', 'WCAG 那个经典边界（#767676 对白 = 4.54:1）算错了');
+  assert.equal(T.contrastRatio('#fff', '#000000'), null, '三位简写被瞎补成六位了 —— 读不出来就该给 null，不猜一个色');
+  assert.equal(T.contrastRatio(null, '#000000'), null, '缺值没被挡住');
+  assert.equal(T.contrastRatio('#ffffff', '#GGGGGG'), null, '不合法色值没被挡住');
+
+  // ② 八张皮肤两档：实现算的与独立口径逐张一致（差在浮点噪声内）。
+  for (const skin of SKINS) {
+    for (const mode of ['light', 'dark']) {
+      const fg = skin.tokens['--dsw-alias-label-primary'][mode];
+      const bg = skin.tokens['--dsw-alias-bg-base'][mode];
+      const got = T.contrastRatio(fg, bg);
+      assert.ok(Math.abs(got - wcag(fg, bg)) < 1e-9,
+        `${skin.id} ${mode}：实现算 ${got}，独立口径算 ${wcag(fg, bg)} —— 两份漂了`);
+    }
+  }
+
+  // ③ 读数真的画在卡片上：每张有自己令牌的卡都带一句，且都过 AA。
+  resetRuntime();
+  resetFetch();
+  const theme = makeStubTheme();
+  entryCtx({ theme });
+  T.applySkin(theme, A_SKIN);
+  const tree = CLIENT.AppearancePage({});
+  const out = walk(tree);
+  const readouts = out.texts.filter((t) => t.includes('正文对比'));
+  assert.equal(readouts.length, SKINS.length, `画出来的对比度读数条数不对：${readouts.length} vs 皮肤数 ${SKINS.length}`);
+  const ratios = readouts.map((t) => Number((t.match(/([\d.]+):1/) ?? [])[1]));
+  assert.ok(ratios.every((r) => Number.isFinite(r)), `有一条读数没带数字：${readouts.join(' / ')}`);
+  assert.ok(ratios.every((r) => r >= 4.5), `有皮肤的正文对比低于 AA：${readouts.join(' / ')}`);
+  assert.equal(findByClass(tree, 'ap-contrast-low').length, 0, '八张都过 AA，却挂上了低对比度的红标');
+
+  // ④ 「不覆盖」那张没有自己的令牌 ⇒ 不画读数（宁可不画，也不编一个数）。
+  const noneCard = findByProp(tree, 'data-ap-id', SKIN_NONE_ID)[0];
+  assert.ok(noneCard, '"不覆盖"那张卡不见了 —— 这条断言会空转');
+  assert.ok(!walk(noneCard).texts.some((t) => t.includes('正文对比')), '"不覆盖"没有自己的令牌，却编了一个对比度读数');
+  assert.ok(walk(noneCard).texts.includes('不改任何配色'), '"不覆盖"该写"不改任何配色"');
+
+  // ⑤ 低对比度那条支路真的存在（拿一对故意不达标的色走一遍），且它的红字读宿主令牌。
+  const bad = T.readabilityOf(
+    { '--dsw-alias-label-primary': { light: '#BBBBBB' }, '--dsw-alias-bg-base': { light: '#FFFFFF' } }, 'light');
+  assert.ok(bad && bad.low === true, `低对比度没被标出来：${JSON.stringify(bad)}`);
+  assert.match(T.CSS, /\.ap-contrast-low\{[^}]*var\(--dsw-alias-state-error-primary/, '低对比度的红标写死了色值（红线：一律读宿主令牌）');
+});
+
+check('ap-55 页头那两处反馈都是 live region：换肤成了、存不住了，读屏都接得住', () => {
+  resetRuntime();
+  resetFetch();
+  entryCtx({ theme: makeStubTheme() });
+  const head = findByClass(CLIENT.AppearancePage({}), 'ap-head')[0];
+  assert.ok(head, '页头不在 —— 这条断言会空转');
+  const status = findByClass(head, 'ap-status')[0];
+  assert.ok(status, '摘要行不在 —— 这条断言会空转');
+  assert.equal(status.props['aria-live'], 'polite', '摘要行没有 aria-live：读屏用户听不到"换肤成了"');
+  assert.equal(status.props['aria-atomic'], 'true', '摘要行没设 atomic：只会念出被改动的那半个词，像半句话');
+  // 按钮不许混进摘要那个 live region —— 塞进去的话每次换肤读屏都会把按钮名再念一遍。
+  assert.equal(childOf(status).filter((c) => c?.type === 'button').length, 0,
+    '「全部还原」被塞进了摘要的 live region 里（每次换肤都会被念一遍）');
+
+  // 红字条同样要报：它一存在就必须是个 status 区。
+  T.runtime.storeNote = '这台机器上存不住 —— 重启后回到原样';
+  const notices = findByClass(findByClass(CLIENT.AppearancePage({}), 'ap-head')[0], 'ap-notices')[0];
+  assert.ok(notices, '红字条那块不在 —— 这条断言会空转');
+  assert.equal(notices.props.role, 'status', '红字条没有 role=status');
+  assert.equal(notices.props['aria-live'], 'polite', '红字条没有 aria-live：失败了读屏用户压根不知道');
+});
+
+check('ap-57 两处上传口都能"拖进来"和"粘上来"，最后走的是同一条上传通道', () => {
+  resetRuntime();
+  resetFetch();
+  hostPayload();
+  const picked = [];
+  T.runtime.brand.nameMode = 'image'; // 名称行那格只有停在"自定义图片"来源时才渲染出来
+  const props = {
+    onPick() {}, busy: false, markError: null, markNote: null,
+    nameDraft: null, nameMsg: null, onNameDraft() {}, onNameApply() {}, onNameSource() {},
+    onNameFile: (f) => picked.push(['name', f]), onNameClear() {}, nameImageNote: null, nameImageError: null,
+    onMarkFile: (f) => picked.push(['mark', f]),
+  };
+  const draw = () => T.LogoSection(props);
+  const markZone = () => findByClass(draw(), 'ap-mark ap-mark-upload')[0];
+  const nameZone = () => findByProp(draw(), 'data-ap-id', 'name-image')[0];
+
+  for (const [who, el] of [['图标位', markZone()], ['名称行', nameZone()]]) {
+    assert.ok(el, `${who}那格不在 —— 这条断言会空转`);
+    for (const k of ['onDragEnter', 'onDragOver', 'onDragLeave', 'onDrop', 'onPaste']) {
+      assert.equal(typeof el.props[k], 'function', `${who}那格没有 ${k}，拖不进去/粘不上`);
+    }
+    assert.equal(el.props.tabIndex, 0, `${who}那格不能聚焦 ⇒ 键盘用户永远粘不上（粘贴只发给有焦点的元素）`);
+  }
+
+  // 拖进来：dragover 必须 preventDefault（不拦，浏览器根本不派 drop，还会把文件当页面导航）；
+  // drop 也要拦（否则整个应用跳去打开那个文件），并把文件交给那一格。
+  const f1 = { type: 'image/png', size: 4321 };
+  let over = 0;
+  markZone().props.onDragOver({ preventDefault: () => { over += 1; } });
+  assert.equal(over, 1, 'onDragOver 没 preventDefault —— 浏览器不会派 drop');
+  let dropped = 0;
+  markZone().props.onDrop({ preventDefault: () => { dropped += 1; }, dataTransfer: { files: [f1] } });
+  assert.equal(dropped, 1, 'onDrop 没 preventDefault —— 浏览器会把这个文件当成"打开它"');
+  assert.deepEqual(picked, [['mark', f1]], `拖进来的图没送到图标位：${JSON.stringify(picked.map((p) => p[0]))}`);
+
+  // 粘贴：走同一格自己身上的 onPaste（**不是**全局监听 —— 那会把整个应用里每次粘贴都抢走）。
+  const f2 = { type: 'image/jpeg', size: 99 };
+  nameZone().props.onPaste({ preventDefault() {}, clipboardData: { files: [f2] } });
+  assert.deepEqual(picked.at(-1), ['name', f2], '粘上来的图没送到名称行');
+
+  // 剪贴板里没有文件（用户复制了一段文字）⇒ 什么都不做：不拦、也不当成选图。
+  const before = picked.length;
+  let blocked = 0;
+  nameZone().props.onPaste({ preventDefault: () => { blocked += 1; }, clipboardData: { files: [] } });
+  assert.equal(picked.length, before, '剪贴板里没有文件，却当成选了一张图');
+  assert.equal(blocked, 0, '剪贴板里没有文件却 preventDefault —— 会吃掉用户在别处正常粘贴的文字');
+
+  // 有的浏览器粘贴只填 items、不填 files（截图粘贴常见）：那条兜底也得通。
+  const f3 = { type: 'image/png', size: 7 };
+  nameZone().props.onPaste({
+    preventDefault() {}, clipboardData: { files: [], items: [{ kind: 'string' }, { kind: 'file', getAsFile: () => f3 }] },
+  });
+  assert.deepEqual(picked.at(-1), ['name', f3], 'clipboardData.items 那条兜底没接住');
+
+  // 拖到哪一格，高亮就长在哪一格自己身上（用户红线：反馈落对象自身，不许浮层提示条）。
+  ReactStub.__reset();
+  ReactStub.__force('mark');
+  const hovered = draw();
+  assert.equal(findByClass(hovered, 'ap-mark ap-mark-upload ap-drop').length, 1, '拖到图标位上，那一格没高亮');
+  const nameEl = findByProp(hovered, 'data-ap-id', 'name-image')[0];
+  assert.ok(!String(nameEl.props.className).includes('ap-drop'), '拖到图标位上，名称行那格也跟着亮了');
+  ReactStub.__reset(); // 清掉强制值，别让它漏给后面的用例
+  assert.match(T.CSS, /\.ap-drop\{[^}]*var\(--dsw-alias-brand-primary/, '拖拽高亮写死了色值（红线：一律读宿主令牌）');
+  // 这件能力得说出来，不然用户不会去试（"自动处理必须说出来"的同一条口径）。
+  assert.ok(walk(draw()).texts.some((t) => t.includes('拖到') && t.includes('粘贴')),
+    `界面上没说"可以拖进来 / 粘上来"：${JSON.stringify(walk(draw()).texts)}`);
+});
+
+await checkA('ap-56 一键「全部还原为官方」：三处一次归位，落盘的字段一个不漏（已全官方时按钮禁用）', async () => {
+  resetRuntime();
+  resetFetch();
+  const theme = makeStubTheme();
+  const slots = makeStubSlots();
+  slots.occupyOfficialBrand(['sidebar.brand.mark', 'conversation.hero.brand.mark', 'sidebar.brand.name']);
+  entryCtx({ theme, slots });
+
+  const btn = () => findByProp(CLIENT.AppearancePage({}), 'data-ap-id', 'reset-all')[0];
+  const b0 = btn();
+  assert.ok(b0, '页头没有「全部还原为官方」按钮');
+  assert.equal(b0.props.disabled, true, '进来就是全官方了，按钮却是亮的（按了没反应 = 用户以为坏了）');
+
+  // 三处都改掉：一张皮肤 + 一枚标志 + 一行名字 + 一张名称行图。
+  T.applySkin(theme, A_SKIN);
+  T.setBrand({ mode: 'builtin', markId: 'ring' });
+  T.setBrandName('奋进的工作台');
+  T.setBrandNameImage(`${ROUTE_PREFIX}/api/logo?which=name&v=3`);
+  assert.equal(btn().props.disabled, false, '明显改过东西了，按钮还是禁用的');
+  assert.equal(slots.entriesOfSlot('sidebar.brand.mark')[0].component.name, 'BrandMark', '前置条件：自定义标志本来该在渲染');
+
+  fetchCalls.length = 0;
+  btn().props.onClick();
+
+  // 运行时三处都归位。
+  assert.equal(T.runtime.skinId, SKIN_NONE_ID, '配色没回"不覆盖"');
+  assert.equal(T.runtime.brand.mode, 'off', '标志档位没回原样');
+  assert.equal(T.runtime.brand.nameMode, 'off', '名称行来源没回官方');
+  assert.equal(T.runtime.brand.name, null, '名称行文字没清');
+  assert.equal(T.runtime.brand.nameImageUrl, null, '名称行图片地址没清');
+  // 官方自己回到渲染位（撤占位 = 宿主看见注册表变化才会重画）。
+  assert.equal(slots.entriesOfSlot('sidebar.brand.mark')[0].component.name, 'OfficialFill', '官方标志没回到渲染位');
+  assert.equal(slots.entriesOfSlot('sidebar.brand.name')[0].component.name, 'OfficialFill', '官方名称行没回到渲染位');
+  assert.equal(btn().props.disabled, true, '刚还原完，按钮该立刻变灰');
+
+  // 落盘：皮肤一条、brand 一条。brand 那条**四个字段都得在** —— 少一个，宿主就以为
+  // "这个字段我们还不知道值"（它的写是整份覆盖），重启后旧名字或旧图又冒出来。
+  await Promise.resolve();
+  const posts = fetchCalls.filter((c) => c.url.endsWith('/prefs')).map((c) => JSON.parse(c.init.body));
+  assert.ok(posts.some((p) => p.skinId === SKIN_NONE_ID), `没把"配色回不覆盖"写进存档：${JSON.stringify(posts)}`);
+  const brandPatch = posts.map((p) => p.brand).find(Boolean);
+  assert.ok(brandPatch, `没把 brand 写进存档：${JSON.stringify(posts)}`);
+  assert.deepEqual(Object.keys(brandPatch).sort(), ['markId', 'mode', 'name', 'nameImage'],
+    `还原的 patch 字段不全 —— 缺的那个重启后会变成旧值：${JSON.stringify(brandPatch)}`);
+  assert.equal(brandPatch.mode, 'off');
+  assert.equal(brandPatch.markId, null);
+  assert.equal(brandPatch.name, null);
+  assert.equal(brandPatch.nameImage, false);
+});
+
 // 异步用例到这里才真正跑（登记制）：漏写 await 也不会让它们被 process.exit 抢跑。
 await runAsyncCases();
 console.log(`\nclient: ${passed} 过 / ${failures.length} 挂`);

@@ -128,6 +128,45 @@ window.__ModuleLoader__.load({
     /** 生效核对时抽查的令牌：一张背景、一个文字、一个强调色。 */
     const SPOT_TOKENS = ['--dsw-alias-bg-base', '--dsw-alias-label-primary', '--dsw-alias-brand-primary'];
 
+    /* ---- 小工具：颜色可读性（纯函数，无副作用 ⇒ 能离线断言） ---- */
+    /**
+     * WCAG 相对亮度的一个通道。**公式与 `test/skins.test.mjs` 的 `hexLum` 逐字一致** ——
+     * 两份实现（一份跑在 Node 侧读 lib/skins.js，一份跑在浏览器侧给界面用）由 ap-55 交叉核对钉住。
+     */
+    const hexChannel = (hex, i) => {
+      const v = parseInt(hex.slice(i, i + 2), 16) / 255;
+      return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+    };
+    /** @returns {number|null} 相对亮度；不是 #RRGGBB 就 null（界面上不画就行，不瞎猜一个色） */
+    function hexLuminance(hex) {
+      const s = String(hex ?? '').trim();
+      if (!/^#[0-9a-fA-F]{6}$/.test(s)) return null;
+      return 0.2126 * hexChannel(s, 1) + 0.7152 * hexChannel(s, 3) + 0.0722 * hexChannel(s, 5);
+    }
+    /** @returns {number|null} WCAG 对比度（1~21）；任一个读不出来就 null。 */
+    function contrastRatio(a, b) {
+      const la = hexLuminance(a);
+      const lb = hexLuminance(b);
+      if (la === null || lb === null) return null;
+      const [hi, lo] = la >= lb ? [la, lb] : [lb, la];
+      return (hi + 0.05) / (lo + 0.05);
+    }
+    /**
+     * 一张皮肤的"正文可读性"读数：`label-primary` 压在 `bg-base` 上的对比度。
+     * 为什么挑这一对：它是整屏文字的主干，正文读不清，别的颜色配得再漂亮也是白搭。
+     * "不覆盖"那张没有自己的令牌（`tokens === null`）⇒ 返回 null，卡片上不画这一项，不编一个数。
+     * @returns {{ratio:number,text:string,low:boolean}|null}
+     */
+    function readabilityOf(tokens, scheme) {
+      if (!tokens) return null;
+      const ratio = contrastRatio(
+        tokens['--dsw-alias-label-primary']?.[scheme],
+        tokens['--dsw-alias-bg-base']?.[scheme],
+      );
+      if (ratio === null) return null;
+      return { ratio, text: `正文对比 ${ratio.toFixed(1)}:1`, low: ratio < 4.5 };
+    }
+
     const cfg = () => globalThis[GLOBAL_KEY] || {};
     const skinList = () => (Array.isArray(cfg().skins) ? cfg().skins : []);
     const skinById = (id) => skinList().find((s) => s && s.id === id) || null;
@@ -823,7 +862,7 @@ window.__ModuleLoader__.load({
      * 这一行同时是**操作的反馈落点**（用户红线：不许浮层提示条）。点一张皮肤，这里的名字与处数当场变；
      * 存档写失败、配色没生效、标志没换上，也全部落在这里 —— 不再让人滚到页面最底下才发现出错。
      */
-    function Head() {
+    function Head({ onResetAll, resetReady } = {}) {
       const notes = [];
       if (!runtime.themeReady) notes.push(['ch', '配色通道未就绪 —— 现在点哪张都不会变']);
       if (runtime.layerError) notes.push(['layer', runtime.layerError]);
@@ -832,11 +871,27 @@ window.__ModuleLoader__.load({
       if (note) notes.push(['store', note]);
       return h('div', { className: 'ap-head' },
       h('h2', { className: 'ap-title' }, '桌面外观'),
-      h('div', { className: 'ap-status' },
-        h('span', { className: 'ap-chip' }, h('span', {}, '配色'), h('b', {}, skinLabel())),
-        h('span', { className: 'ap-chip' }, h('span', {}, '明暗'), h('b', {}, SCHEME_LABELS[runtime.scheme] ?? '未确认')),
-        h('span', { className: 'ap-chip' }, h('span', {}, '标志'), h('b', {}, brandLabel()))),
-      notes.length === 0 ? null : h('div', { className: 'ap-notices' },
+      /**
+       * 摘要与「全部还原」并排一行：前者是**活的**（点一张皮肤这里就变），后者是随时可用的退路。
+       * 两个盒子分开写而不是把按钮塞进摘要里 —— 摘要带 `aria-live`，按钮塞进去的话每次换肤
+       * 读屏都会把"全部还原为官方"这几个字再念一遍。
+       */
+      h('div', { className: 'ap-head-row' },
+        h('div', { className: 'ap-status', 'aria-live': 'polite', 'aria-atomic': 'true' },
+          h('span', { className: 'ap-chip' }, h('span', {}, '配色'), h('b', {}, skinLabel())),
+          h('span', { className: 'ap-chip' }, h('span', {}, '明暗'), h('b', {}, SCHEME_LABELS[runtime.scheme] ?? '未确认')),
+          h('span', { className: 'ap-chip' }, h('span', {}, '标志'), h('b', {}, brandLabel()))),
+        // 已经是全官方时**禁用而不隐藏**：藏起来用户永远不知道有这条路；禁着至少看得见、
+        // 鼠标停上去还写着为什么按不动（禁用的落点也是对象自己身上，不是浮层提示条）。
+        h('button', {
+          type: 'button', className: 'ap-reset', 'data-ap-id': 'reset-all',
+          disabled: !resetReady,
+          title: resetReady ? '把配色、标志、名称行一次都还给官方' : '现在已经是官方外观了，没有要还原的东西',
+          onClick: () => { if (typeof onResetAll === 'function') onResetAll(); },
+        }, '全部还原为官方')),
+      // 红字条同样要报出来（`role="status"` 自带 polite + atomic）：它是"这次没成"的落点，
+      // 读屏软件听不到就等于用户压根没被告知失败。
+      notes.length === 0 ? null : h('div', { className: 'ap-notices', role: 'status', 'aria-live': 'polite' },
         notes.map(([key, text]) => h('p', { key, className: 'ap-notice ap-err' }, text))));
     }
 
@@ -921,6 +976,59 @@ window.__ModuleLoader__.load({
       const { mode, markId, imageUrl: pickedUrl, nameImageUrl, nameMode } = runtime.brand;
       const anyBusy = Boolean(busy);
       const nameBusy = busy === LOGO_TARGET_NAME;
+      /**
+       * 此刻鼠标正把一张图拖在哪一格上（`'mark'` / `'name'` / null）。用途只有一个：给那一格挂高亮。
+       * 反馈落在**被操作的那格自己身上**（用户红线：不许浮层提示条）；放成 state 而不是就地改 DOM
+       * —— 这格是 React 画的，绕过它去改类名，下一次重画就被抹掉。
+       */
+      const [dragOver, setDragOver] = useState(null);
+
+      /**
+       * 从一次拖拽 / 粘贴里捞出"那个文件"。两条口径：
+       *   · `files` 优先 —— Chromium / Electron 拖图与粘贴截图都会填它；
+       *   · 退而查 `items` 里 `kind==='file'` 的那些（部分浏览器粘贴只填 items 不填 files）。
+       * 优先挑图片类型的；一个都不像图就把第一个交出去，让 `uploadImage` 去说人话（"这个不是图片：…"）。
+       */
+      const pickFrom = (dt) => {
+        if (!dt) return null;
+        const files = dt.files && dt.files.length
+          ? [...dt.files]
+          : (dt.items ? [...dt.items].filter((i) => i?.kind === 'file').map((i) => i.getAsFile?.()).filter(Boolean) : []);
+        return files.find((f) => String(f?.type || '').startsWith('image/')) ?? files[0] ?? null;
+      };
+      /**
+       * 一格"能接图"的完整口径：**拖进来**（悬停高亮 → 松手换上）与**粘贴**（先点一下这格、再 Ctrl+V）。
+       * 两个入口最后都走同一条 `onFile` —— 与本插件别处一样，一份处理、多个入口，不各写一遍。
+       *
+       * `onDragOver` 里的 `preventDefault` 不是可选项：不拦住，浏览器压根不派 `drop`，
+       * 还会把拖进来的文件当成"导航到这个文件"（整个应用跳走）。
+       * `onDragLeave` 用 `relatedTarget` 判是不是真离开了这一格 —— 这格里有子元素，
+       * 鼠标从高亮框挪到里面的缩略图上也会触发 dragleave，不判一下就是一路闪。
+       *
+       * 粘贴**不做全局监听**：面板开着的时候 `document` 上挂一个 paste 监听，会把整个应用里
+       * 每一次粘贴都抢走（用户往输入框里粘一段文字也被我们当成选图）。所以只挂在这一格上，
+       * 想粘就先点它一下 —— `tabIndex` 让键盘也能走到这里。
+       * @param {'mark'|'name'} target 这一格的身份（决定高亮挂给谁）
+       * @param {(file:File|Blob)=>void} onFile
+       */
+      const dropZone = (target, onFile) => ({
+        tabIndex: 0,
+        onDragEnter: (e) => { e.preventDefault?.(); setDragOver(target); },
+        onDragOver: (e) => { e.preventDefault?.(); },
+        onDragLeave: (e) => { if (!e?.currentTarget?.contains?.(e?.relatedTarget)) setDragOver(null); },
+        onDrop: (e) => {
+          e.preventDefault?.();
+          setDragOver(null);
+          const f = pickFrom(e.dataTransfer);
+          if (f) onFile(f);
+        },
+        onPaste: (e) => {
+          const f = pickFrom(e.clipboardData);
+          if (!f) return;
+          e.preventDefault?.();
+          onFile(f);
+        },
+      });
       /** 方向键的顺序 = 视觉顺序（图片那格自成一类控件，不进这组 radio）。 */
       const ids = ['off', ...markList().map((m) => m.id)];
       /**
@@ -956,8 +1064,10 @@ window.__ModuleLoader__.load({
         : nameSrc === NAME_SRC_IMAGE
           ? [
             h('label', {
-              key: 'p', className: `ap-name-b ap-name-pick${nameImageUrl ? ' ap-on' : ''}`,
+              key: 'p',
+              className: `ap-name-b ap-name-pick${nameImageUrl ? ' ap-on' : ''}${dragOver === LOGO_TARGET_NAME ? ' ap-drop' : ''}`,
               'data-ap-id': 'name-image',
+              ...dropZone(LOGO_TARGET_NAME, (f) => onNameFile(f)),
             },
               nameImageUrl
                 ? h('img', { className: 'ap-name-thumb', src: nameImageUrl, alt: '', draggable: false })
@@ -1008,7 +1118,10 @@ window.__ModuleLoader__.load({
             h(BrandMark, { size: 34, mode: BRAND_MODE_BUILTIN, markId: m.id })),
           name('n', m.name),
         ]))),
-      h('label', { className: `ap-mark ap-mark-upload${mode === BRAND_MODE_IMAGE ? ' ap-on' : ''}` },
+      h('label', {
+        className: `ap-mark ap-mark-upload${mode === BRAND_MODE_IMAGE ? ' ap-on' : ''}${dragOver === LOGO_TARGET_MARK ? ' ap-drop' : ''}`,
+        ...dropZone(LOGO_TARGET_MARK, (f) => onMarkFile(f)),
+      },
         h('span', { className: `ap-thumb${pickedUrl ? ' ap-thumb-set' : ''}` },
           pickedUrl
             ? h(BrandMark, { size: 34, mode: BRAND_MODE_IMAGE, imageUrl: pickedUrl })
@@ -1020,7 +1133,7 @@ window.__ModuleLoader__.load({
           onChange: (e) => onMarkFile(e.target?.files?.[0]),
         })),
       h('p', { key: 'lim', className: 'ap-marks-note ap-muted' },
-        `支持的图片：${LOGO_ALLOWED_MIMES.map((m) => LOGO_MIME_LABELS[m] ?? m).join(' / ')}（GIF、BMP 这些也能选，会自动转成 WebP 或 JPEG）；单张不超过 ${Math.round(LOGO_MAX_SOURCE_BYTES / 1024 / 1024)}MB，选进来会自动压到 ${Math.round(LOGO_MAX_BYTES / 1024)}KB 以内 —— 图标位裁成方形，名称行那张按原比例缩`),
+        `支持的图片：${LOGO_ALLOWED_MIMES.map((m) => LOGO_MIME_LABELS[m] ?? m).join(' / ')}（GIF、BMP 这些也能选，会自动转成 WebP 或 JPEG）；单张不超过 ${Math.round(LOGO_MAX_SOURCE_BYTES / 1024 / 1024)}MB，选进来会自动压到 ${Math.round(LOGO_MAX_BYTES / 1024)}KB 以内 —— 图标位裁成方形，名称行那张按原比例缩。也可以把图直接拖到上面那格里，或先点一下那格再按 Ctrl+V 粘贴。`),
       // 处理结果就落在这里（绿 = 成了、红 = 没成）。**那行绿字只在"这张图真的还在用"时出现**：
       // 切回内置图标之后它就该消失（用户 2026-10-04 报的正是它一直挂着，规则在 noteVisible 里）。
       markNote ? h('p', { key: 'ok', className: 'ap-marks-err ap-ok' }, markNote) : null,
@@ -1451,6 +1564,42 @@ window.__ModuleLoader__.load({
         });
       };
 
+      /**
+       * 一键**全部还原为官方**：配色回「不覆盖」、标志回原样（两格占位撤掉）、名称行两头都清。
+       *
+       * 为什么放在这里而不是让用户去三处分别点：这三件事是同一个念头（"我不要这套外观了"），
+       * 拆成三处就得先知道它们分别在哪 —— 而"哪一处还没还原干净"正是用户最容易漏的地方。
+       *
+       * 落盘上有两处必须一起做对：
+       *   ① **三个"用户动过"开关全部举起来**。宿主的写是整份覆盖，少举一个它就会以为"这个字段
+       *      我们还不知道值"，于是把清空漏掉 —— 重启后名字或那张图又回来了（这是本项目的老坑）。
+       *   ② `setBrand({ mode: off })` 只归档位管（它**刻意**不碰名称行那三样），名称行的清空
+       *      交给 `clearNameArt()` —— 那一个动作才是"文字与图片两头一起清"（分工见它们各自的注释）。
+       *
+       * 图片字节**不删**（和「清掉图片」同一条口径：只把那个 0/1 开关关掉）—— 宿主表句柄
+       * 有没有 `delete` 还没在真机上验过，不拿没验过的能力当实现。
+       */
+      const resetAll = () => {
+        runtime.userChose = true;
+        runtime.markTouched = true;
+        runtime.nameTouched = true;
+        runtime.imageTouched = true;
+        applySkin(themeRef, SKIN_NONE_ID);
+        setBrand({ mode: BRAND_MODE_OFF });
+        clearNameArt();
+        // 界面上的临时态也一起扫干净：还原后还挂着"上一次选图的结果"或一行红字就是没还原干净。
+        setBusy(null);
+        setPickError(null);
+        setPickNote(null);
+        setNameDraft(null);
+        setNameMsg(null);
+        bump();
+        postReport();
+        // 两条最小 patch：皮肤一条、brand 一条（宿主的 prefs 是整份覆盖，但这两件事本来就分属两组字段）。
+        persistSkin(SKIN_NONE_ID).then(bump);
+        persistBrand().then(bump);
+      };
+
       // 顺序 = 界面顺序：「不覆盖」排第一（用户 2026-10-04 要求）。它是进来默认选中的那一项
       // （默认档 = 原样），排在首位，用户一眼就能把"现在生效的"和"第一张卡"对上。
       const choices = [
@@ -1458,9 +1607,19 @@ window.__ModuleLoader__.load({
         ...skinList().map((s) => ({ id: s.id, name: s.name, note: s.note, tokens: s.tokens, tokenCount: Object.keys(s.tokens || {}).length })),
       ];
       const skinIds = choices.map((c) => c.id);
+      /**
+       * 「全部还原」该不该可点：判据是**这三处现在是不是都已经是官方**，而不是"用户点没点过"
+       * —— 从存档恢复出来的状态也算数（重启后带着一张皮肤进来，这个按钮就该是活的）。
+       * 三个条件正好对应 `resetAll` 会改的那三件事，多一个少一个都会出现"按了没反应"
+       * 或"明明没什么可还原却亮着"。配色通道没就绪时一律禁（那时连配色都换不动）。
+       */
+      const alreadyOfficial = runtime.skinId === SKIN_NONE_ID
+        && runtime.brand.mode === BRAND_MODE_OFF
+        && runtime.brand.nameMode === NAME_SRC_OFF;
+      const resetReady = runtime.themeReady && !alreadyOfficial;
 
       return h('div', { className: 'ap-root' },
-      h(Head),
+      h(Head, { onResetAll: resetAll, resetReady }),
       h(SectionHead, { title: '标志', hint: '换的是侧栏与会话首屏那两格图标；名称行在下面单独设，两件事各管各的' }),
       h(LogoSection, {
         onPick: chooseMark,
@@ -1484,6 +1643,8 @@ window.__ModuleLoader__.load({
       h('div', { className: 'ap-cards', role: 'radiogroup', 'aria-label': '配色' },
       choices.map((c) => {
         const on = runtime.skinId === c.id;
+        // 读数的明暗档跟着**当前生效的那一档**走，与上面那个预览块同一口径（读不到按亮档，不猜）。
+        const rd = readabilityOf(c.tokens, runtime.scheme === 'dark' ? 'dark' : 'light');
         return h('button', {
           key: c.id, type: 'button', role: 'radio', 'aria-checked': on ? 'true' : 'false',
           className: `ap-skin${on ? ' ap-on' : ''}`, 'data-ap-id': c.id,
@@ -1496,7 +1657,20 @@ window.__ModuleLoader__.load({
           on ? h('span', { className: 'ap-check' }, h(CheckMark)) : null),
         h('span', { className: 'ap-skin-note' }, c.note),
         h(SkinSwatch, { tokens: c.tokens }),
-        h('span', { className: 'ap-skin-foot' }, c.tokenCount ? `改 ${c.tokenCount} 处配色` : '不改任何配色'));
+        /**
+         * 脚注两件事：改了多少钱处的配色，以及**这张皮肤正文读起来清不清楚**。
+         * 后一个数是挑皮肤时最该看到、也最容易被颜色本身盖过去的一件事 —— 好看不好看一眼就有，
+         * 读得清不清得算。`ap-contrast-low` 只在真低于 AA 时挂上（现在八张都过，留着是为了
+         * 以后加皮肤时它当场红，而不是靠人记得量一遍）。
+         */
+        h('span', { className: 'ap-skin-foot' },
+          h('span', {}, c.tokenCount ? `改 ${c.tokenCount} 处配色` : '不改任何配色'),
+          rd
+            ? h('span', {
+              className: `ap-contrast${rd.low ? ' ap-contrast-low' : ''}`,
+              title: 'WCAG 对比度（正文文字 vs 页面底），AA 正文要求 ≥ 4.5:1',
+            }, ` · ${rd.text}`)
+            : null));
       })),
       h(StatusCard),
       h(Disclosure));
@@ -1518,6 +1692,13 @@ window.__ModuleLoader__.load({
       '.ap-head{display:flex;flex-direction:column;gap:9px}',
       '.ap-title{margin:0;font-size:17px;font-weight:600;color:var(--dsw-alias-label-primary,inherit)}',
       '.ap-status{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 18px}',
+      // 摘要与「全部还原」分处两端；窄面板放不下时按钮换到第二行、仍靠右（flex-wrap + space-between）。
+      '.ap-head-row{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px}',
+      // 退路按钮：皮与「选图片」那类次按钮一致（读宿主令牌，禁态只退字色、留边框）。
+      '.ap-reset{appearance:none;font:inherit;font-size:12px;cursor:pointer;padding:5px 11px;border:1px solid var(--dsw-alias-border-l2,#8886);border-radius:8px;background:var(--dsw-alias-bg-layer-2,transparent);color:var(--dsw-alias-label-secondary,inherit)}',
+      '.ap-reset:hover:not([disabled]){border-color:var(--dsw-alias-border-l3);background:var(--dsw-alias-interactive-bg-hover)}',
+      '.ap-reset:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
+      '.ap-reset[disabled]{cursor:not-allowed;color:var(--dsw-alias-label-tertiary,inherit);background:transparent}',
       '.ap-chip{display:inline-flex;align-items:baseline;gap:6px;font-size:12px;color:var(--dsw-alias-label-tertiary,inherit)}',
       '.ap-chip b{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,inherit)}',
       '.ap-notices{display:flex;flex-direction:column;gap:6px}',
@@ -1543,6 +1724,8 @@ window.__ModuleLoader__.load({
       '.ap-thumb-set{border-style:solid;border-color:var(--dsw-alias-border-l1,transparent)}',
       '.ap-thumb-plus{font-size:17px;line-height:1;color:var(--dsw-alias-label-tertiary,inherit)}',
       '.ap-mark-img{object-fit:contain;border-radius:6px}',
+      // 拖到这一格上时的高亮：长在那一格自己身上（不是浮层），颜色读写宿主令牌。
+      '.ap-drop{border-color:var(--dsw-alias-brand-primary);background:color-mix(in srgb, var(--dsw-alias-brand-primary) 10%, transparent)}',
       '.ap-marks-note{flex:0 0 100%;margin:0;font-size:12px}',
       '.ap-marks-err{flex:0 0 100%;margin:0;font-size:12px}',
       '.ap-file{display:none}',
@@ -1599,6 +1782,8 @@ window.__ModuleLoader__.load({
       '.ap-skin-note{margin:0;min-height:2.6em;font-size:12px;line-height:1.45;color:var(--dsw-alias-label-tertiary,inherit)}',
       // 动作行钉在卡片底部：同一行卡片等高（grid stretch），脚注就必然齐平。
       '.ap-skin-foot{margin-top:auto;font-size:12px;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-tertiary,inherit)}',
+      // 对比度读数只在真低于 AA 时变色（这是"就地红字条"那一类反馈落在对象自己身上，不是浮层提示）。
+      '.ap-contrast-low{color:var(--dsw-alias-state-error-primary,inherit)}',
       '.ap-check{flex:none;display:flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary-inverted)}',
 
       // 皮肤预览块：颜色由 SkinSwatch 按那张皮肤自己给（见它上面的注释），这里只定形状。
@@ -1688,6 +1873,7 @@ window.__ModuleLoader__.load({
       LOGO_TARGETS, LOGO_TARGET_MARK, LOGO_TARGET_NAME, SHAPE_OF, NAME_LOGO_MAX_W, NAME_LOGO_MAX_H,
       NAME_SRC_LIST, NAME_SRC_LABELS, NAME_SRC_OFF, NAME_SRC_TEXT, NAME_SRC_IMAGE,
       cfg, skinById, applySkin, spotCheck, snapshotOf, postReport, runtime, CSS, injectStyle,
+      contrastRatio, hexLuminance, readabilityOf,
       BrandMark, NameSlot, nameArt, noteVisible, markShapes, setBrand, setBrandName, setBrandNameImage, clearNameArt,
       setBrandNameSource,
       syncBrand, desiredBrandSlots, clearBrand, bootBrand, loadPrefs, persist, persistSkin, persistBrand,
