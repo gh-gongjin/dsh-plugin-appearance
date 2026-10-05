@@ -152,5 +152,54 @@ check('sk-11 夹具自身：120 条去重后仍 120，三条前缀伪项按尾�
   assert.equal(hostTokens.size, 117);
 });
 
+/*
+ * ---- 令牌用途闸：按「用途」填，不许按名字猜 ----
+ *
+ * 用户 2026-10-05 报的真机 bug：换肤后正文里的行内代码变成**实心深蓝方块、字看不见**。
+ * 根因不是"颜色没挑好"，而是**把底色的令牌当字色填了**：
+ * `--dsw-alias-markdown-inline-code` 名字像字色，实际宿主只拿它做 `background-color`
+ * （asar 原文：`.markdown code{background-color:var(--dsw-alias-markdown-inline-code)}`）。
+ * 第一版填 `light:#1B3D6B / dark:#C8DAF6` —— 亮档深底配深字、暗档浅底配浅字，两头都看不见。
+ *
+ * 这条闸钉的不是"某个色值"，是**这个令牌的形态必须是"底"**：
+ *   ① 正文落在它上面够读（≥4.5:1）—— 填成字色时这条当场红（深藏蓝 vs 正文 #101A2B 只有 ~1.5:1）；
+ *   ② 与页面底拉得开（芯片得看得见）；
+ *   ③ 方向对：亮档比 bg-base 更沉、暗档比 bg-base 更亮 —— 这才是"压下去的一块底"。
+ */
+const CODE_BG = '--dsw-alias-markdown-inline-code';
+
+check('sk-12 markdown-inline-code 是行内代码的「底」不是「字」（令牌名会骗人，用途由真机 CSS 定）', () => {
+  for (const skin of SKINS) {
+    for (const mode of ['light', 'dark']) {
+      const codeBg = skin.tokens[CODE_BG]?.[mode];
+      const text = skin.tokens['--dsw-alias-label-primary'][mode];
+      const base = skin.tokens['--dsw-alias-bg-base'][mode];
+      assert.ok(codeBg, `${skin.id} 缺 ${CODE_BG}，这条闸就量不到了`);
+
+      // ① 它是底 ⇒ 正文压在上面必须能读。填成字色（深底深字）时这条最先红。
+      const onCode = contrast(text, codeBg);
+      assert.ok(
+        onCode >= 4.5,
+        `${skin.id} ${mode} 档 正文落在 ${CODE_BG}(${codeBg}) 上只有 ${onCode.toFixed(2)}:1 —— 这个令牌是行内代码的【底】，被当成字色填就会同色叠同色（真机 bug 的形态）`,
+      );
+
+      // ② 它是"芯片底" ⇒ 得与页面底拉得开，否则那块底看不见（填成 bg-base 本身就会踩这条）。
+      const chip = contrast(codeBg, base);
+      assert.ok(
+        chip >= 1.05,
+        `${skin.id} ${mode} 档 ${CODE_BG}(${codeBg}) 与 bg-base(${base}) 几乎同色（${chip.toFixed(3)}:1），行内代码的底看不出来`,
+      );
+
+      // ③ 方向：亮档要更沉、暗档要更亮 —— 把"底"这个形态本身钉死（填反了就成了另一块高光）。
+      const dL = hexLum(codeBg) - hexLum(base);
+      if (mode === 'light') {
+        assert.ok(dL < 0, `${skin.id} 亮档 ${CODE_BG}(${codeBg}) 该比 bg-base(${base}) 更沉，实测更亮（ΔL=${dL.toFixed(3)}）`);
+      } else {
+        assert.ok(dL > 0, `${skin.id} 暗档 ${CODE_BG}(${codeBg}) 该比 bg-base(${base}) 更亮，实测更沉（ΔL=${dL.toFixed(3)}）`);
+      }
+    }
+  }
+});
+
 console.log(`\nskins: ${passed} 过 / ${failures.length} 挂`);
 process.exit(failures.length ? 1 : 0);
