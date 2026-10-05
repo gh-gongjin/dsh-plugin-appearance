@@ -275,7 +275,7 @@ await check('hs-14 存档从没写过 → GET /api/prefs 报 skinId=none / mode=
   const { handler } = bootWithStorage();
   const r = await call(handler, 'GET', `${ROUTE_PREFIX}/api/prefs`);
   assert.equal(r.code, 200);
-  assert.deepEqual(r.json.data, { skinId: 'none', brand: { mode: 'off', markId: null, name: null }, logoUrl: null, nameLogoUrl: null, stored: false, updatedAt: null });
+  assert.deepEqual(r.json.data, { skinId: 'none', brand: { mode: 'off', markId: null, name: null, nameImage: false }, logoUrl: null, nameLogoUrl: null, stored: false, updatedAt: null });
 });
 
 await check('hs-15 POST /api/prefs 写皮肤 → 再读读得回；未知皮肤 id 400 且旧值不动', async () => {
@@ -300,7 +300,7 @@ await check('hs-16 标志档位：未知 mode 与未知内置款式都拒；buil
   const ok = await call(handler, 'POST', `${ROUTE_PREFIX}/api/prefs`, { brand: { mode: 'builtin', markId: 'ring' } });
   assert.equal(ok.json.data.brand.markId, 'ring');
   const off = await call(handler, 'POST', `${ROUTE_PREFIX}/api/prefs`, { brand: { mode: 'off' } });
-  assert.deepEqual(off.json.data.brand, { mode: 'off', markId: null, name: null });
+  assert.deepEqual(off.json.data.brand, { mode: 'off', markId: null, name: null, nameImage: false });
 });
 
 // 编号排在这里是因为它跟 hs-16 是同一件事的两半（prefs 的 brand 那两个字段各自独立判存）；
@@ -539,6 +539,9 @@ await check('hs-28 图与文字是"两个都报"：宿主不替界面做二选�
   // 用户 2026-10-04 选定的口径是"图片优先、文字留着"。宿主这边只要如实把两个都送过去；
   // 在这里抹掉任何一个都是在替浏览器半边做决定，而它做的那个决定是用户回不去的。
   assert.equal(r.json.data.brand.name, '奋进的个人工作台', '有图就把文字抹掉了');
+  // 那个 0/1 开关必须**原样送到页面**：页面恢复"那一格用的是哪个来源"只认它（client.js 的 bootBrand）。
+  // 少了这一个字段，图上一次重启就掉回文字 —— 用户 2026-10-04 报的正是这条。
+  assert.equal(r.json.data.brand.nameImage, true, `宿主没把名称行的图片开关报给页面 —— 重启后那一格会掉回文字：${JSON.stringify(r.json.data.brand)}`);
   assert.match(r.json.data.nameLogoUrl, /which=name/, `名称行这张图的 URL 要带 which：${r.json.data.nameLogoUrl}`);
   assert.equal(r.json.data.stored, true, '只有名称行那张图时也得算"存过"');
 
@@ -547,6 +550,7 @@ await check('hs-28 图与文字是"两个都报"：宿主不替界面做二选�
   await call(legacy.handler, 'POST', `${ROUTE_PREFIX}/api/logo`, { mime: 'image/png', dataUrl: pngDataUrl() });
   const old = await call(legacy.handler, 'GET', `${ROUTE_PREFIX}/api/prefs`);
   assert.equal(old.json.data.nameLogoUrl, null, '只存过图标位那格时，名称行该如实报"没有"');
+  assert.equal(old.json.data.brand.nameImage, false, '没点过开关时报合必须是真的 false，不是 undefined —— 页面那边 `=== true` 才切图片档');
 });
 
 await check('hs-29 最小 patch 合法：`brand` 底下每个字段各自独立判存（只清图片 / 只改文字都不许连带别字段）', async () => {

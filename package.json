@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-appearance",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "type": "module",
   "description": "DSH 外观插件：用宿主官方主题通道换配色皮肤（8 张内置）、用 brand slot 换侧栏与首屏标志（内置六枚或用户自己的图片），选择记在宿主存储里，刚进来是原样。不写宿主文件、不注入全局 CSS、不碰系统设置。",
   "main": "index.js",
