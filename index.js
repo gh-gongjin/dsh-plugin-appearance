@@ -28,9 +28,7 @@
 import {
   createApiHandler, ROUTE_PREFIX, GLOBAL_KEY, PANEL_ID, PANEL_LABEL,
 } from './lib/api.js';
-import {
-  SKINS, SKIN_SOURCE, SKIN_NONE_ID, DEFAULT_SKIN_ID,
-} from './lib/skins.js';
+import { SKINS, SKIN_SOURCE, SKIN_NONE_ID, DEFAULT_SKIN_ID, HOST_TOKEN_COUNT } from './lib/skins.js';
 import { BRAND_MARKS, BRAND_DEFAULT_MODE } from './lib/marks.js';
 import { createAppearanceStore, DOMAIN_NAME } from './lib/store.js';
 
@@ -64,7 +62,16 @@ export function apply(ctx, config = {}) {
     noneSkinId: SKIN_NONE_ID,
     defaultBrandMode: BRAND_DEFAULT_MODE,
     store: storeState(),
-    skins: SKINS.map((s) => ({ id: s.id, name: s.name, note: s.note, tokenCount: Object.keys(s.tokens).length })),
+    // ★ tokens 与 tokenCount **两个都要**：前者是浏览器半边画配色卡预览用的（它要逐令牌取色），
+    //   后者是卡片脚注"改 N 处"与页头摘要用的。
+    //   2026-10-06 把 index-inject 并到这一份时漏了 tokens —— 那份原来带、这份没带，
+    //   合并当场把预览图打成空白（hs-5 报 `skins[0].tokens` 是 undefined）。
+    //   教训：**"两份真相"的代价不只是字段会漂，是合并时你不知道该取谁** ——
+    //   并集要逐个字段对过，不能凭印象认为"state() 是超集"。
+    skins: SKINS.map((s) => ({ id: s.id, name: s.name, note: s.note, tokens: s.tokens, tokenCount: Object.keys(s.tokens).length })),
+    // 真机语义令牌总数（宿主版本属性）—— 面板那段"其余 N 个露出内置配色"靠它，
+    // 不写死在文案里（宿主升级后 ap-18 会当场红，见 lib/skins.js 那条注释）。
+    hostTokenCount: HOST_TOKEN_COUNT,
     marks: BRAND_MARKS,
     lastReport,
     builtAt,
@@ -101,24 +108,16 @@ export function apply(ctx, config = {}) {
 
   ctx.on('webserver/index-inject', (table) => {
     if (!routeReady) return;
-    // 载荷里的表每次现算：lib/skins.js 与 lib/marks.js 是唯一出处，这里不另存快照。
+    // ★ 载荷与 `GET /api/state` **同源**（都用下面那个 state()），这里只多两个"入口要用"的键：
+    //   routePrefix / api —— 浏览器半边拿它拼请求前缀。
+    //   原来这里是**另手写的一份**：字段清单两处各写各的。2026-10-06 加 hostTokenCount 时
+    //   只进了 state()，这一份漏了 ⇒ 浏览器半边读不到那个数，面板文案悄悄走进降级分支
+    //   （数字说不出来了），而界面上完全看不出是"推丢了"。hs-5 就是钉这条的。
+    //   一份真相不是"表每次现算"就够的 —— **字段清单**也得只有一份。
     table.push({
       kind: 'global',
       name: GLOBAL_KEY,
-      value: {
-        panelId: PANEL_ID,
-        label: PANEL_LABEL,
-        routePrefix: ROUTE_PREFIX,
-        api: `${ROUTE_PREFIX}/api`,
-        source: SKIN_SOURCE,
-        // 默认档 = 原样：不套任何皮肤、不占任何 brand 格。存档里真有过选择才由浏览器半边覆盖。
-        defaultSkinId: DEFAULT_SKIN_ID,
-        noneSkinId: SKIN_NONE_ID,
-        defaultBrandMode: BRAND_DEFAULT_MODE,
-        store: storeState(),
-        skins: SKINS.map((s) => ({ id: s.id, name: s.name, note: s.note, tokens: s.tokens })),
-        marks: BRAND_MARKS,
-      },
+      value: { ...state(), routePrefix: ROUTE_PREFIX, api: `${ROUTE_PREFIX}/api` },
     });
   });
 

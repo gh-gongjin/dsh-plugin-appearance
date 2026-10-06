@@ -8,8 +8,15 @@
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { makeStubReact, walk, makeStubTheme, makeStubSlots } from './_stubs.mjs';
-import { SKINS, SKIN_SOURCE, SKIN_NONE_ID, DEFAULT_SKIN_ID, skinChoices } from '../lib/skins.js';
+import { SKINS, SKIN_SOURCE, SKIN_NONE_ID, DEFAULT_SKIN_ID, skinChoices, HOST_TOKEN_COUNT } from '../lib/skins.js';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+/** 皮肤覆盖的令牌数 —— **从表算**，不写死。2026-10-06 补侧边栏那 4 个时（24→28）
+ *  一次踩到五条写死的断言，每条都只是"数字变了"，判据本身没问题。 */
+const COVERED = Object.keys(SKINS[0].tokens).length;
 import { BRAND_MARKS, BRAND_MODES, BRAND_NAME_MAX } from '../lib/marks.js';
 import { LOGO_MIMES, LOGO_MAX_BYTES, LOGO_TARGETS } from '../lib/store.js';
 import { GLOBAL_KEY, ROUTE_PREFIX, PANEL_ID as HOST_PANEL_ID } from '../lib/api.js';
@@ -103,7 +110,11 @@ function hostPayload(overrides = {}) {
     defaultSkinId: DEFAULT_SKIN_ID,
     noneSkinId: SKIN_NONE_ID,
     marks: BRAND_MARKS,
-    skins: SKINS.map((s) => ({ id: s.id, name: s.name, note: s.note, tokens: s.tokens })),
+    // ★ 载荷是 index.js 那份 state() 的镜像，字段**逐字跟着它**（ap-20 那个口径）。
+    //   2026-10-06 漏了 tokenCount / hostTokenCount：前者让页头"· N 处"与面板那段"覆盖 N 个"
+    //   直接读不到数、悄悄走进降级分支（ap-18 是因此红的），后者让文案里的"真令牌共 N 个"说不出来。
+    skins: SKINS.map((s) => ({ id: s.id, name: s.name, note: s.note, tokens: s.tokens, tokenCount: Object.keys(s.tokens).length })),
+    hostTokenCount: HOST_TOKEN_COUNT,
     ...overrides,
   };
 }
@@ -221,7 +232,7 @@ check('ap-7 进来不套任何配色层：overrideTokens 一次都不调，生�
   assert.equal(theme.getTheme().active.tokens['--dsw-alias-bg-base'], undefined, '宿主活动快照里出现了本插件的令牌');
 });
 
-check('ap-7b 点一张皮肤：一次 overrideTokens、source 正确、24 个令牌、抽查三个全一致', () => {
+check('ap-7b 点一张皮肤：一次 overrideTokens、source 正确、整表令牌都送出、抽查三个全一致', () => {
   resetRuntime();
   resetFetch();
   const theme = makeStubTheme();
@@ -230,9 +241,12 @@ check('ap-7b 点一张皮肤：一次 overrideTokens、source 正确、24 个令
   assert.equal(ok, true);
   assert.equal(theme.calls.length, 1, `overrideTokens 调用次数应为 1，实得 ${theme.calls.length}`);
   assert.equal(theme.calls[0].source, SKIN_SOURCE);
-  assert.equal(Object.keys(theme.calls[0].tokens).length, 24);
+  // ★ 数字从皮肤表算，不写死 24：2026-10-06 补侧边栏那 4 个令牌（24→28）时，
+  //   写死的断言会在加表的同时红一遍 —— 而这条判据真正想问的是"整表都送出去了"。
+  const covered = Object.keys(SKINS[0].tokens).length;
+  assert.equal(Object.keys(theme.calls[0].tokens).length, covered);
   assert.equal(T.runtime.skinId, A_SKIN);
-  assert.equal(T.runtime.appliedCount, 24);
+  assert.equal(T.runtime.appliedCount, covered);
   assert.equal(T.runtime.spots.length, 3);
   assert.ok(T.runtime.spots.every((s) => s.ok), JSON.stringify(T.runtime.spots));
 });
@@ -272,7 +286,7 @@ check('ap-9 未知皮肤 id：不回落默认值冒充，如实报"未知皮肤"
   assert.match(T.runtime.layerError, /未知皮肤 nope/);
   assert.equal(theme.calls.length, 1, '未知的 id 一个字节都不该送出去');
   assert.equal(T.runtime.skinId, A_SKIN, '上一张还在生效，账写成"未应用"就是界面在说谎');
-  assert.equal(T.runtime.appliedCount, 24);
+  assert.equal(T.runtime.appliedCount, COVERED);
 });
 
 check('ap-10 "不覆盖"把整层摘掉：宿主活动快照里不再有我这些令牌', () => {
@@ -364,7 +378,7 @@ await checkA('ap-15 回报送到宿主 report 通道，字段是白名单那六�
   const body = JSON.parse(call.init.body);
   assert.deepEqual(Object.keys(body).sort(), ['applied', 'error', 'logo', 'scheme', 'skinId', 'spots']);
   assert.equal(body.skinId, A_SKIN);
-  assert.equal(body.applied, '24');
+  assert.equal(body.applied, String(COVERED));
   assert.match(body.logo, /^builtin:ring /, `回报里要能看出是哪一档：${body.logo}`);
   assert.match(body.logo, /sidebar\.brand\.mark=ok@-1/);
   // 名称行那一格得单独报——它是"两张脸"（文字 / 图片），页头那行只报"哪一样"，
@@ -434,14 +448,20 @@ check('ap-17 别的覆盖层抢走同一个令牌：抽查报"没生效"，不�
   assert.ok(out.texts.some((t) => t.includes('没生效')), `页面上要看得见这条没生效：${JSON.stringify(out.texts)}`);
 });
 
-check('ap-18 页面上写的数字与皮肤表/令牌夹具对齐（覆盖 24 / 真令牌 117 / 未覆盖 93）', () => {
-  // 这条纯粹防文案自己漂：皮肤加一张、或宿主升级重采了令牌，界面上那句"只覆盖 N 个"就得跟着改，
-  // 不改就是当着用户面报假数。
+check('ap-18 页面上写的数字与皮肤表/令牌夹具对齐（覆盖数 / 真令牌数 / 未覆盖数，三个都不许写死）', () => {
+  // 这条纯粹防文案自己漂：皮肤加令牌、或宿主升级重采了令牌，界面上那句"覆盖 N 个、其余 M 个"就得跟着动，
+  // 不动就是当着用户面报假数。
+  // ★ 2026-10-06：三个数**全部改成从数据推导**（原来 117 是写死的），并加一条"载荷 vs 夹具"的比对 ——
+  //   宿主升级后夹具重采而 lib/skins.js 的 HOST_TOKEN_COUNT 忘了跟，这条会当场红，不会静默撒谎。
   const covered = Object.keys(SKINS[0].tokens).length;
-  const realTokens = 117; // 与 sk-11 同值：夹具 120 行去掉 3 条前缀伪项
+  const raw = fs.readFileSync(path.join(ROOT, 'test', 'fixtures', 'host-tokens.txt'), 'utf8')
+    .split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+  const realTokens = new Set(raw.filter((t) => !t.endsWith('-'))).size;   // 与 sk-11 同一口径：去掉前缀伪项
+  assert.equal(HOST_TOKEN_COUNT, realTokens,
+    `载荷报的真令牌数 ${HOST_TOKEN_COUNT} 与夹具算出来的 ${realTokens} 不一致：宿主升级重采后要同步 lib/skins.js`);
   const out = walk(ReactStub.createElement(CLIENT.AppearancePage, {}));
-  assert.ok(out.texts.some((t) => t.includes(`只覆盖 ${covered} 个令牌`)), `文案里的覆盖数对不上：${JSON.stringify(out.texts.filter((t) => t.includes('只覆盖')))}`);
-  assert.ok(out.texts.some((t) => t.includes(`真令牌共 ${realTokens} 个`) && t.includes(`其余 ${realTokens - covered} 个`)), '未覆盖数没算对或没写');
+  assert.ok(out.texts.some((t) => t.includes(`覆盖 ${covered} 个令牌`)), `文案里的覆盖数对不上：${JSON.stringify(out.texts.filter((t) => t.includes('覆盖')))}`);
+  assert.ok(out.texts.some((t) => t.includes(`共 ${realTokens} 个`) && t.includes(`其余 ${realTokens - covered} 个`)), '未覆盖数没算对或没写');
   // 用户 2026-10-03 明确要求删掉开发期脚手架（宿主回报回读那张卡）：钉住，别哪天自己长回来。
   assert.ok(!out.texts.some((t) => t.includes('宿主回报回读')), 'GET /state 回读卡是复核用的脚手架，不该留在用户界面上');
 });
@@ -799,7 +819,7 @@ check('ap-32 页头那行摘要就是操作的反馈落点（点了什么、成�
   T.applySkin(theme, A_SKIN);
   T.setBrand({ mode: 'builtin', markId: 'ring' });
   const headChosen = textsOf(findByClass(CLIENT.AppearancePage({}), 'ap-status')[0]);
-  assert.match(headChosen, new RegExp(`${SKINS[0].name} · 24 处`), `点了皮肤却没在页头报出名字与处数：${headChosen}`);
+  assert.match(headChosen, new RegExp(`${SKINS[0].name} · ${COVERED} 处`), `点了皮肤却没在页头报出名字与处数：${headChosen}`);
   assert.match(headChosen, /内置 · 圆环 · 2 格/, `点了标志却没在页头报出占了几格：${headChosen}`);
 
   // 存档写失败：红字条要落在**页头块里**（不是页尾某张卡），用户才不用往下翻才知道没存住。

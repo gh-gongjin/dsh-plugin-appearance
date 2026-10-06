@@ -14,6 +14,8 @@ import { SKINS, SKIN_NONE_ID, DEFAULT_SKIN_ID, skinById, skinChoices, overrideLa
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FIXTURE = path.join(ROOT, 'test', 'fixtures', 'host-tokens.txt');
+/** 宿主内置配色的**实际值**（真机抽出）—— sk-13 的判据要拿它当基准（见那段注释）。 */
+const hostValues = JSON.parse(fs.readFileSync(path.join(ROOT, 'test', 'fixtures', 'host-token-values.json'), 'utf8'));
 
 let passed = 0;
 const failures = [];
@@ -145,11 +147,90 @@ check('sk-10 强调色按钮上的反白文字在每张皮肤两档都够亮/够
   }
 });
 
-check('sk-11 夹具自身：120 条去重后仍 120，三条前缀伪项按尾字符规则剔出', () => {
-  assert.equal(rawTokens.length, 120, `夹具行数变了：${rawTokens.length}（宿主升级要重采）`);
+check('sk-11 夹具自身：131 条去重后仍 131，三条前缀伪项按尾字符规则剔出', () => {
+  assert.equal(rawTokens.length, 131, `夹具行数变了：${rawTokens.length}（宿主升级要重采，见 tmp/extract-host-tokens.mjs）`);
   assert.equal(new Set(rawTokens).size, rawTokens.length, '夹具里有重复行');
   assert.equal(artifacts.length, 3, `前缀伪项应为 3 条，实得 ${artifacts.length}：${artifacts.join(', ')}`);
-  assert.equal(hostTokens.size, 117);
+  assert.equal(hostTokens.size, 128);
+});
+
+/*
+ * ---- 侧边栏专用令牌闸：宿主左边栏读的是另一套前缀 ----
+ *
+ * 用户 2026-10-06 真机截图报的：「换了配色，只有右边栏换了、左边栏没换，左边栏改不了吗」。
+ * 根因不是通道限制（三段都核过：validateOverrides 只校验值的形态、不校验令牌名；
+ * composeActive 无条件合并；落地是 body.style.setProperty(name, value) —— 任何 CSS 变量都写得上去），
+ * 而是**皮肤表漏了一整套令牌**：宿主侧栏读 `--dsw-specific-sidebar-*`，
+ * 而原来的 24 个覆盖**全是 `--dsw-alias-*`**（asar 原文：
+ * `.BynINW_sidebarCol{background:var(--dsw-specific-sidebar-fill);border-right:.5px solid var(--dsw-alias-border-l3)}`）。
+ * 夹具当时也只抽了 alias，所以 sk-2 永远发现不了这个缺口 —— 这次把 specific 一并采进来。
+ *
+ * 这条闸钉的是**这 4 个令牌都在、且按用途成立**（不钉具体色值）：
+ *   ① 四个令牌名一个不缺（缺一个就从上一张皮肤露出内置灰）；
+ *   ② 侧栏底与导航三态**逐级递增**（亮档越远越沉、暗档越远越亮）—— 方向反了 hover 会"跳回来"；
+ *   ③ 真实用途上的字读得清：`label-primary` 落在 fill/hover/active 上（导航文字就压在这三处），
+ *      以及**徽标**那格 —— `.mAtvLq_badge{background:var(--dsw-specific-sidebar-nav-item-active-accent);
+ *      color:var(--dsw-alias-button-info-fill)}`，字色是别名层的中蓝，皮肤没覆盖它 ⇒ 用真机默认值兜底。
+ */
+const SIDEBAR = {
+  fill: '--dsw-specific-sidebar-fill',
+  hover: '--dsw-specific-sidebar-nav-item-hover',
+  active: '--dsw-specific-sidebar-nav-item-active',
+  accent: '--dsw-specific-sidebar-nav-item-active-accent',
+};
+/** 宿主**内置**的这 4 个值（真机夹具）—— 判据的基准，不是 4.5（见下面徽标那段说明）。 */
+const hostS = (scheme, key) => hostValues[scheme][SIDEBAR[key]];
+/** `rgb(65, 118, 230)` → `#4176e6`（真机夹具存的是 rgb 形式，本文件其余地方都是 hex）。 */
+const rgbToHex = (v) => {
+  const [r, g, b] = String(v).replace(/^rgb\(|\)$/g, '').split(',').map((n) => Number(n.trim()));
+  return '#' + [r, g, b].map((n) => n.toString(16).padStart(2, '0')).join('');
+};
+const BADGE_FG = '--dsw-alias-button-info-fill';
+
+check('sk-13 侧边栏 4 个令牌一张不缺、方向对、且真实用色处的字读得清（左边栏换肤靠的就是这一套）', () => {
+  for (const skin of SKINS) {
+    for (const key of Object.keys(SIDEBAR)) {
+      const tok = SIDEBAR[key];
+      const m = skin.tokens[tok];
+      assert.ok(m && typeof m.light === 'string' && typeof m.dark === 'string',
+        `${skin.id} 缺 ${tok}：宿主侧栏读这一套，不填它换肤只有主区变、左边栏不动`);
+    }
+    for (const scheme of ['light', 'dark']) {
+      const v = (k) => skin.tokens[SIDEBAR[k]][scheme];
+      // ② 方向：亮档越远越沉、暗档越远越亮；三态逐级递增
+      const deeper = (x, y) => (scheme === 'light' ? hexLum(x) < hexLum(y) : hexLum(x) > hexLum(y));
+      assert.ok(deeper(v('fill'), skin.tokens['--dsw-alias-bg-base'][scheme]),
+        `${skin.id} ${scheme}: sidebar-fill 不在 bg-base 的"更远"一侧（侧栏会与主区糊成一片）`);
+      assert.ok(deeper(v('hover'), v('fill')), `${skin.id} ${scheme}: hover 没比 fill 更远一档`);
+      assert.ok(deeper(v('active'), v('hover')), `${skin.id} ${scheme}: active 没比 hover 更远一档`);
+      // ③ 导航文字（label-primary）压在三个底上都要过 4.5:1 —— 这三处是侧栏里字最密的地方
+      for (const k of ['fill', 'hover', 'active']) {
+        const r = contrast(skin.tokens['--dsw-alias-label-primary'][scheme], v(k));
+        assert.ok(r >= 4.5, `${skin.id} ${scheme}: 导航文字 on ${k} = ${r.toFixed(2)}:1，低于 4.5`);
+      }
+      // ③b 徽标：字色是 `--dsw-alias-button-info-fill`（皮肤不覆盖 ⇒ 用真机默认兜底）。
+      //     目标是**不劣于宿主现状** —— 那个中蓝字色压在亮底上的对比上限只有 4.23:1
+      //     （它的相对亮度 0.198 摆在那儿，数学上到不了 4.5），宿主自己也只有 3.60:1。
+      //     硬卡 4.5 会让这条断言变成永假，量不到东西。
+      const fgHex = rgbToHex(hostValues[scheme][BADGE_FG]);
+      const floor = contrast(fgHex, rgbToHex(hostS(scheme, 'accent'))) - 0.15;
+      const rBadge = contrast(fgHex, v('accent'));
+      assert.ok(rBadge >= floor,
+        `${skin.id} ${scheme}: 徽标字 on accent = ${rBadge.toFixed(2)}:1，低于宿主现状 ${floor.toFixed(2)}`);
+      // ③c 徽标那块底得**看得见**（与侧栏底不完全相同）
+      assert.ok(contrast(v('accent'), v('fill')) > 1.005,
+        `${skin.id} ${scheme}: accent 与 sidebar-fill 完全同色，徽标那块底会消失`);
+    }
+  }
+});
+
+check('sk-13b 反向：把 4 个侧边栏令牌剥掉后，sk-13 的第一条断言必须不成立（否则那条闸是摆设）', () => {
+  const stripped = SKINS.map((s) => Object.fromEntries(
+    Object.entries(s.tokens).filter(([k]) => !Object.values(SIDEBAR).includes(k)),
+  ));
+  const missing = stripped.flatMap((tk) => Object.values(SIDEBAR).filter((t) => !tk[t]));
+  assert.equal(missing.length, SKINS.length * 4,
+    `剥掉侧边栏令牌后应当缺 ${SKINS.length * 4} 个，实得 ${missing.length}：这条反向判据本身要能成立`);
 });
 
 /*

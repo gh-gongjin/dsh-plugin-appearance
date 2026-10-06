@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { apply, name as PLUGIN_NAME, inject } from '../index.js';
 import { ROUTE_PREFIX, GLOBAL_KEY, PANEL_ID } from '../lib/api.js';
-import { SKINS, SKIN_SOURCE, DEFAULT_SKIN_ID, SKIN_NONE_ID } from '../lib/skins.js';
+import { SKINS, SKIN_SOURCE, DEFAULT_SKIN_ID, SKIN_NONE_ID, HOST_TOKEN_COUNT } from '../lib/skins.js';
 import { BRAND_MARKS, BRAND_NAME_MAX } from '../lib/marks.js';
 import { LOGO_MIMES, LOGO_MAX_BYTES, DOMAIN_NAME } from '../lib/store.js';
 import { makeStubStorage } from './_stubs.mjs';
@@ -27,7 +27,12 @@ async function check(name, fn) {
   try {
     await fn(); passed += 1; console.log(`  PASS  ${name}`);
   } catch (e) {
-    failures.push(name); console.log(`  FAIL  ${name}\n        ${e.message.split('\n')[0]}`);
+    // ★ 2026-10-06：原来只打第一行 —— 而 assert.deepEqual 的第一行永远是
+    // "Expected values to be strictly deep-equal:"，真正的 diff 在下面，全被吞了。
+    // 排"两个对象差在哪"时等于没有信息，只能靠临时加 console.log 一遍遍试。
+    failures.push(name);
+    const lines = String(e.message).split('\n').slice(0, 14).join('\n        ');
+    console.log(`  FAIL  ${name}\n        ${lines}`);
   }
 }
 
@@ -140,6 +145,10 @@ await check('hs-5 index-inject 载荷与 lib/skins.js 逐字同表（一份真�
   assert.equal(row.value.noneSkinId, SKIN_NONE_ID);
   assert.deepEqual(row.value.skins.map((s) => s.id), SKINS.map((s) => s.id));
   assert.deepEqual(row.value.skins[0].tokens, SKINS[0].tokens, '令牌表在推送时被改写过');
+  // 覆盖数（面板卡片脚注/页头摘要用）与真令牌总数（面板那段"其余 N 个"用）都要推过去：
+  // 少推一个，浏览器半边就悄悄走进降级分支 —— 文案不说数了，而界面上看不出来是"推丢了"。
+  assert.deepEqual(row.value.skins.map((s) => s.tokenCount), SKINS.map((s) => Object.keys(s.tokens).length));
+  assert.equal(row.value.hostTokenCount, HOST_TOKEN_COUNT);
 });
 
 await check('hs-6 GET /api/state → 200，报出皮肤表、默认档与存档可用性', async () => {
@@ -150,7 +159,9 @@ await check('hs-6 GET /api/state → 200，报出皮肤表、默认档与存档�
   assert.equal(r.json.ok, true);
   assert.equal(r.json.data.defaultSkinId, DEFAULT_SKIN_ID);
   assert.equal(r.json.data.defaultSkinId, SKIN_NONE_ID, '默认档就是"不覆盖"：进来原样');
-  assert.deepEqual(r.json.data.skins.map((s) => s.tokenCount), SKINS.map(() => 24));
+  assert.deepEqual(r.json.data.skins.map((s) => s.tokenCount), SKINS.map((s) => Object.keys(s.tokens).length),
+    '每张皮肤的覆盖数要如实报（八张同批槽位，但一律从表算，不写死）');
+  assert.equal(r.json.data.hostTokenCount, HOST_TOKEN_COUNT, '真令牌总数没推给浏览器半边');
   assert.deepEqual(r.json.data.marks.map((m) => m.id), BRAND_MARKS.map((m) => m.id), '内置标志清单没推给浏览器半边');
   assert.equal(r.json.data.store.available, false, '这台假 ctx 没给 storageDomain，state 必须如实报不可用');
   assert.equal(r.json.data.lastReport, null, '刚装配完不该已有回报');

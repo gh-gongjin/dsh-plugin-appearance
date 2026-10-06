@@ -118,3 +118,14 @@
 --dsw-alias-turn-trigger-
 --dsw-alias-turn-trigger-bg
 --dsw-alias-turn-trigger-bg-hover
+--dsw-specific-bubble
+--dsw-specific-bubble-highlight
+--dsw-specific-input-major
+--dsw-specific-login-input
+--dsw-specific-menu
+--dsw-specific-selector
+--dsw-specific-sidebar-fill
+--dsw-specific-sidebar-nav-item-active
+--dsw-specific-sidebar-nav-item-active-accent
+--dsw-specific-sidebar-nav-item-hover
+--dsw-specific-tip

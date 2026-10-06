@@ -417,8 +417,10 @@ builtAt    = 1791178367973
 - 官方入口页的配方（`ConversationHero` 那族，class `.fO69Vq_*`）：`.fO69Vq_page{box-sizing:border-box;height:100%;display:flex;flex-direction:column;overflow:auto}` —— 即**页面自己撑满格子并自己滚**；页头另用 `.fO69Vq_pageHead{padding-top:calc(28px + var(--dsh-frame-top-clearance,0px))}` 让开标题栏，宿主对主页面板发布 `--dsh-frame-top-clearance`（macOS `48px` / Windows `var(--dsh-windows-titlebar-height)`）。本插件的 `.ap-root` 抄的就是这一族（§1 决策 14）；页头没做 clearance 内缩，因为面板自带标题行、且 `height:100%` 已经把标题栏那条扣在外面了。
 
 **令牌全集**
-- `test/fixtures/host-tokens.txt`：**120** 个 `--dsw-alias-*`，从运行中的 desktop asar 抽的（0.1.7 web 只有 99 个，不许拿它当基线）。其中 3 条是模板前缀伪项（`--dsw-alias-file-diff-` / `--dsw-alias-scrollbar-` / `--dsw-alias-turn-trigger-`，尾字符是 `-`），剔掉得 **117** 个真令牌 —— sk-11 钉这个算术，sk-2 钉「皮肤表里写的每个令牌名都在这 117 个里」。
-- 八张皮肤各覆盖 **24** 个 ⇒ 其余 93 个露出内置配色，页面上就地写明（`Disclosure` 第 ③ 条），不假装整站换肤；ap-18 钉「界面文案里的数字必须与皮肤表/夹具算出来的一致」。
+- `test/fixtures/host-tokens.txt`：**131** 行（**120** 个 `--dsw-alias-*` + **11** 个 `--dsw-specific-*`），从运行中的 desktop asar 抽的（0.1.7 web 只有 99 个，不许拿它当基线）。其中 3 条是模板前缀伪项（`--dsw-alias-file-diff-` / `--dsw-alias-scrollbar-` / `--dsw-alias-turn-trigger-`，尾字符是 `-`），剔掉得 **128** 个真令牌 —— sk-11 钉这个算术，sk-2 钉「皮肤表里写的每个令牌名都在这 128 个里」。
+  ★ **2026-10-06 补上 specific 那 11 条**（第十一轮）：原来只抽了 alias，于是 sk-2 永远发现不了"皮肤压根没覆盖侧边栏"这个缺口 —— 宿主侧栏读的正是 `--dsw-specific-sidebar-fill` 那一套（`.BynINW_sidebarCol{background:var(--dsw-specific-sidebar-fill)}`）。重采脚本 `tmp/extract-host-tokens.mjs`，口径要求**能逐字重现旧的 120 条 alias**（含那 3 条伪项）—— 重采前先跑它比对，对不齐就说明采集法变了、旧结论要重看。实测 alias 旧 120 / 新 120 逐字一致，新增的只有 specific 那 11 条。
+- 八张皮肤各覆盖 **28** 个（24 个 `--dsw-alias-*` + 4 个侧边栏专用的 `--dsw-specific-sidebar-*`）⇒ 其余 100 个露出内置配色，页面上就地写明（`Disclosure` 第 ③ 条），**且这段文案里的三个数全部动态算**（`tokenCount` × `hostTokenCount`），不写死；ap-18 钉「界面文案里的数字 == 皮肤表/夹具算出来的数」，`HOST_TOKEN_COUNT`（lib/skins.js）与夹具算出来的数不一致时当场红（M84）。
+  ★ 覆盖数曾长期写死（24/117/93）——第十一轮加这 4 个令牌时，**一次红了五条用例**（ap-7b/ap-9/ap-15/ap-18/ap-32），每条都只是"数字变了"、判据本身没问题。改成推导后，同类改动不再需要人记得同步。
 - `test/fixtures/host-token-values.json`：**113 条令牌的内置实际值（light/dark 各一份）**，由 `tmp/extract-token-values.mjs` 从同一份 asar 抽（比上面那份"名字清单"少 4 条：那几条只有模板前缀、没有落地值）。**只有离线出图通道 `tmp/dom-shot.mjs` 用它** —— 出图需要一个真的能画出来的底色，断言套件仍按名字基线走（两者基线不同是刻意的，别把它们并成一个）。宿主升级后要重采一次，`_note` 里写了这条。本轮抽查到的**暗档关键取值**（将来核对暗档对比度/悬停底色时直接引用，不必再跑脚本）：`bg-base rgb(21,21,23)`、`bg-layer-1 rgb(35,35,36)`、`border-l2 #ffffff1f`、`brand-primary rgb(249,250,251)`、`label-primary-inverted rgb(53,54,56)`、`state-error-primary rgb(242,90,90)` —— 注意暗档的 `brand-primary` 是近白、`label-primary-inverted` 是深灰，正好是 sk-10 卡 4.5:1 的那一对（§4 末）。
 
 ---
@@ -471,7 +473,18 @@ tmp/asar-find.mjs / tmp/asar-css.mjs / tmp/extract-token-values.mjs 对运行中
 
 ## 4. 皮肤表与标志表
 
-皮肤 **8 张**，每张 24 个令牌、每令牌 `{light, dark}`；`none`（不覆盖）不是皮肤，是排在**最前**的选项（进来默认选中的就是它，见 §1 决策 25）：
+皮肤 **8 张**，每张 **28 个令牌**（24 个 `--dsw-alias-*` + 4 个 `--dsw-specific-sidebar-*`）、每令牌 `{light, dark}`；`none`（不覆盖）不是皮肤，是排在**最前**的选项（进来默认选中的就是它，见 §1 决策 25）：
+
+★ **侧边栏那 4 个令牌（第十一轮加，2026-10-06）**：宿主左边栏读的是 `--dsw-specific-sidebar-fill` / `-nav-item-hover` / `-nav-item-active` / `-nav-item-active-accent`（四个用途全部经 `tmp/token-audit.mjs` 核实，**都是 `background`**）。取值复刻宿主自己的相对关系，推导脚本 `tmp/sidebar-tokens.mjs`，判据 `sk-13`：
+
+| 令牌 | 取值规则 | 真实用途 |
+| --- | --- | --- |
+| `-sidebar-fill` | 皮肤自己的 `bg-layer-2`（宿主 fill 相对 base 差一档，方向一致） | 侧栏容器底 |
+| `-nav-item-hover` | 皮肤自己的 `bg-layer-3` | 导航格 `:hover` 底 |
+| `-nav-item-active` | `layer-3` 沿 `(layer3 − layer2)` 再外推一档（皮肤只有四档，第三档之后接不上） | 导航格 `.active` 底（**只有底色**，没有别的视觉区分 ⇒ 必须与 hover 拉开） |
+| `-nav-item-active-accent` | 从宿主 accent 的位置出发、沿"对徽标字色更有利"的方向就近搜索 | `.badge` 的**底**（字色是 `--dsw-alias-button-info-fill`，皮肤不覆盖 ⇒ 用真机默认兜底） |
+
+⚠️ `-active-accent` 这个名字**又是骗人的**：它读起来像"选中项的强调色"，实际是未读徽标那块**底**。同理它的取值受制于别人的字色：那个中蓝压在亮底上的对比上限**数学上只有 4.23:1**（宿主自己 3.60:1），所以判据取"不劣于宿主现状"——硬卡 4.5 是一条**永假**的断言（量不到任何东西）。
 
 | id | 名 | 强调色 light / dark |
 |---|---|---|
@@ -538,6 +551,7 @@ tmp/asar-find.mjs / tmp/asar-css.mjs / tmp/extract-token-values.mjs 对运行中
 | U14 | **名称行那张图**在真侧栏里长什么样（尺寸是否合适、会不会被宿主那一行的行高/`overflow` 裁掉），以及用户报的那行绿字在真机上**是不是真的会跟着状态消失** | 名称行那一格挂在**宿主的侧栏 DOM** 上，出图通道里压根没有侧栏（`NameSlot` 只在面板副本里画过）；而且我们给它是 `max-height` 还是自然高度，取决于宿主那一行怎么约束 —— 横向 wordmark（最高 160px）塞进一条侧栏行，很可能需要收窄。**陈旧提示那条同理**：`noteVisible` 是纯函数、离线断言已咬住（ap-48/M49），但"真机上切回星芒之后 DOM 里那行真的没了"仍然只有真机能证 | 真机**完全重启 dsh** 后：① 给名称行传一张横向 wordmark（比如 4:1），截图看侧栏那一行**图有没有被切、有没有把相邻元素挤歪**，再折叠成 rail 看一眼；② 传完图之后切回「星芒」，**同一屏**截图 + 读面板标志区看那句绿字还在不在 | ① 若图被裁：按宿主给那一行的实际高度收口（`max-height` + 等比缩放），必要时在 rail 态换更矮的表现；**不许**用 `position:absolute` 去躲；② 若绿字还在：说明真机上那条派生判据的输入与离线不一致（多半是 `runtime.brand.mode` 没回到 `off`）—— 先读 `GET /api/state` 的 `lastReport.logo` 确认档位，再回写本条 |
 | U15 | 面板里那个**来源下拉**在真机上的样子：`appearance:none` 之后宿主/系统会不会把它的内边距、高度或三角顶掉；**点开时那个系统菜单**在暗档下长什么样（那层菜单是系统画的，我们的令牌管不到） | 出图通道产出的是静态 HTML，**系统下拉菜单压根不存在**（离线只能看到收起来的样子，连"点开是什么样"都截不出来）；而 `appearance:none` 在 Chromium 里对 select 的支持是"基本可控"而非完全可控，某些平台上它仍会用系统控件的内边距 | 真机重启后面板截图：① 收起的下拉（对照设计稿：圆角、边框、右侧自绘小三角、文字色与旁边按钮一致）；② **点开**它截一张（看系统菜单的底色/文字在暗档下读不读得清） | ① 收起态被顶掉：先把 `padding`/`line-height` 写得更死一点（现在是 `padding:5px 26px 5px 10px`，与旁边 `.ap-name-b` 的 `5px 11px` 对齐），必要时退回不加 `appearance:none` 用系统外观；② 菜单在暗档下是白底黑字（系统行为）：**不改**，但记录下来 —— 那是宿主整体的一致性问题，不是本插件一处能修的（也不该为它注入全局样式） |
 | U16 | ✅ **结案（真机 2026-10-05）**：第八轮修的**换肤后行内代码可读性**在真机上真的好了 | 离线只能证明"我们送出去的令牌值是对的、形态是底"（sk-12），**证不了宿主把那个值真的画到了 `.markdown code` 上**；而且这个令牌只在**叠了层之后**才由我们供给，不套皮肤时它露出宿主默认（本来就是灰底，看不出差别） | 真机重启后：点一张皮肤（比如「墨蓝」）→ 找一段带行内代码的正文截图（`npm run xxx` 那种反引号片段）→ 看**底是浅灰、字是正文色、读得清**；暗档再截一张 | **真机读数（像素取证，`tmp/png-diff.mjs`）**：用户报 bug 那张截图里坏值 `#1B3D6B` 有 **93630 像素**（一片深蓝方块、字压在上面看不见）；同一张皮肤修好之后 `#1B3D6B` = **0 像素**、新值 `#DDE2ED` = **53126 像素**。再在同一屏里量三处：芯片底 = `#DDE2ED`(墨蓝)/`#E5DEED`(暮紫) = `markdown-inline-code` 我们填的值；芯片里的字 = `#101A2B`/`#1E1630` = `label-primary`（继承来的，本来就不归这个令牌管）；芯片描边 = `#D5DFEE`/`#DED4EB` = `border-l1`（与 asar 那条 `.markdown code` 规则逐字对上）。正文压在芯片底上 **13.43:1** ⇒ 远超 AA。**暗档仍没验**（两张截图都是 `scheme:"light"`）。若哪天又糊：说明宿主的行内代码不再从 `--dsw-alias-markdown-inline-code` 取底（asar 改版了），重跑 `tmp/token-audit.mjs` 并回写 §4 的口径 |
+| **U17** | ✅ **结案（真机 2026-10-06）**：左边栏跟着皮肤一起换 | 第十一轮补的 4 个 `--dsw-specific-sidebar-*` 令牌（侧栏底 / 悬停 / 选中 / 徽标底）。离线能证明：**值送得出去**（sk-13 钉 4 个令牌一张不缺）、**方向对**（亮档越远越沉、暗档越远越亮）、**真实用色处的字读得清**（导航文字 ≥4.5:1、徽标字不劣于宿主现状） | 真机重启 → 点一张色相明显的皮肤 → 看：① 左侧边栏底色**换没换**；② 导航格悬停反馈；③ 选中那格的底色 | **读数（只读探 `GET /appearance/api/state`，2026-10-06 11:20）**：`skins[].tokenCount = [28×8]` + `hostTokenCount = 128` —— 这两个值**只有新 bundle 才有**（改前是 `[24×8]` / `undefined`），据此确认 11:08:01 那次重启确实加载了新 client；`lastReport.at = 11:19:27` 说明用户点过。**用户目视验收：左边栏跟着换了**。⚠️ **`applied:28` 那一发的直接读数没取到** —— 用户验收后切回了「不覆盖」，而 `lastReport` 只留最后一发（探到时是 `skinId:none / applied:0`）。所以这条的「侧栏真的变色了」是**用户目视**，不是像 U16 那样的像素取证；下次想留像素证据：点一张皮肤后**别切回不覆盖**，直接截图跑 `tmp/png-diff.mjs` 量侧栏区域 |
 
 ---
 

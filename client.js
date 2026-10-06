@@ -792,10 +792,26 @@ window.__ModuleLoader__.load({
       return null;
     }
 
+    /**
+     * 面板底部那段"边界就地写明"。③ 里那两个数字**从数据算**，不写死：
+     *   · 覆盖数 = 皮肤表的 tokenCount（sk-4 钉着八张同批槽位，取第一张即可）
+     *   · 真令牌总数 = 载荷里的 hostTokenCount（宿主版本属性，ap-18 钉它与夹具一致）
+     * 写死的后果是实测过的：令牌从 24 加到 28 之后，页面上还在说"只覆盖 24 个"，
+     * 而 ap-18 正是为此存在的 —— 文案与表漂了要当场红，不能靠人记得改。
+     */
     function Disclosure() {
+      const covered = skinList()[0]?.tokenCount ?? 0;
+      const host = Number(cfg().hostTokenCount);
+      const rest = Number.isFinite(host) && covered ? host - covered : null;
+      // ⚠️ 整段必须拼成**一个字符串**（一个文本节点）：ap-19 靠"含『边界就地写明』"把这段从
+      // "不许出现开发期文案"的扫描里排除掉，而它扫的是**文本节点**。拆成 h('p', {}, a, b, c)
+      // 会变成三个节点，中间那些动态片段就漏在排除之外 —— 实测当场被 '令牌' 这个禁用词抓住。
+      const third = (covered && rest !== null)
+        ? `③ 每张皮肤覆盖 ${covered} 个令牌（含左边栏那一套），宿主语义令牌共 ${host} 个，其余 ${rest} 个露出内置配色`
+        : '③ 每张皮肤只覆盖一部分令牌，其余露出内置配色';
       return h('div', { className: 'ap-disclosure' },
       h('p', {}, '本插件只改这个应用长什么样：配色经宿主的 ctx.theme 覆盖层，标志经宿主的 brand slot。不写宿主文件、不注入全局 CSS、不碰你的系统。'),
-      h('p', {}, '边界就地写明：① 刚进来是原样 —— 配色和标志都要你点过才动，点过的选择存在宿主那边，下次重启自动恢复；② 内置「设置 → 通用 → 外观」那一行仍只有 明亮 / 暗黑 / 跟随系统，本插件的覆盖层叠在它上面，两档都跟着切；③ 每张皮肤只覆盖 24 个令牌，真令牌共 117 个，其余 93 个露出内置配色；④ 侧栏那行字标（deepseek / HARNESS）要你在「名称行」里填字、或者给它选一张图才换，两样都没有就是官方字标（两样都有时画图，点「清掉图片」回到你填的字）；⑤ 标题栏与任务栏上那个名字是构建期常量、exe 与托盘图标是安装目录里的文件，这两样不在插件权限内。'));
+      h('p', {}, `边界就地写明：① 刚进来是原样 —— 配色和标志都要你点过才动，点过的选择存在宿主那边，下次重启自动恢复；② 内置「设置 → 通用 → 外观」那一行仍只有 明亮 / 暗黑 / 跟随系统，本插件的覆盖层叠在它上面，两档都跟着切；${third}；④ 侧栏那行字标（deepseek / HARNESS）要你在「名称行」里填字、或者给它选一张图才换，两样都没有就是官方字标（两样都有时画图，点「清掉图片」回到你填的字）；⑤ 标题栏与任务栏上那个名字是构建期常量、exe 与托盘图标是安装目录里的文件，这两样不在插件权限内。`));
     }
 
     /** 两格标志位给用户看的名字（slot 名留在 runtime 与回报里，界面上不出现）。 */
@@ -1413,7 +1429,11 @@ window.__ModuleLoader__.load({
       const at = (token) => (tokens ? (tokens[token]?.[scheme] ?? 'transparent') : `var(${token}, transparent)`);
       const line = (w, color, cls) => h('span', { className: `ap-sw-line${cls ? ` ${cls}` : ''}`, style: { width: w, background: color } });
       return h('span', { className: 'ap-swatch', style: { background: at('--dsw-alias-bg-base'), borderColor: at('--dsw-alias-border-l1') } },
-      h('span', { className: 'ap-sw-rail', style: { background: at('--dsw-alias-bg-layer-2') } },
+      // ★ 2026-10-06：预览里那条竖栏改用**真正的侧栏令牌** ——
+      //   原来读 `--dsw-alias-bg-layer-2`，与侧栏实际用的不是一个（宿主侧栏读
+      //   `--dsw-specific-sidebar-fill`）。当前两者取值相同（皮肤表里刻意取同一个色阶），
+      //   所以画面没变；但语义上必须对上：哪天侧栏底换成别的档，预览才不会跟着一起错。
+      h('span', { className: 'ap-sw-rail', style: { background: at('--dsw-specific-sidebar-fill') } },
         h('span', { className: 'ap-sw-dot', style: { background: at('--dsw-alias-brand-primary') } }),
         line('84%', at('--dsw-alias-menu-icon')),
         line('58%', at('--dsw-alias-menu-icon')),
